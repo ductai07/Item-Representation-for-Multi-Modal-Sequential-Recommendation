@@ -1,0 +1,14 @@
+torch
+torchvision
+datasets
+sentence-transformers
+transformers
+accelerate
+pandas
+numpy
+scikit-learn
+tqdm
+pyyaml
+pillow
+requests
+streamlit

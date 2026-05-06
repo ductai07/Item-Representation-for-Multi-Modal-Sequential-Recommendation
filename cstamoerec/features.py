@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+import io
+from pathlib import Path
+from typing import Iterable
+
+import requests
+import torch
+from PIL import Image
+from tqdm import tqdm
+
+
+def encode_texts(texts: list[str], model_name: str, batch_size: int = 128, device: str = "cuda") -> torch.Tensor:
+    from sentence_transformers import SentenceTransformer
+
+    model = SentenceTransformer(model_name, device=device if torch.cuda.is_available() else "cpu")
+    embeddings = model.encode(
+        texts,
+        batch_size=batch_size,
+        show_progress_bar=True,
+        convert_to_tensor=True,
+        normalize_embeddings=False,
+    )
+    return embeddings.cpu().float()
+
+
+def encode_images(
+    image_urls: list[str | None],
+    model_name: str,
+    max_image_items: int,
+    timeout: int,
+    device: str = "cuda",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    from transformers import CLIPImageProcessor, CLIPVisionModel
+
+    actual_device = device if torch.cuda.is_available() else "cpu"
+    model = CLIPVisionModel.from_pretrained(model_name).to(actual_device)
+    processor = CLIPImageProcessor.from_pretrained(model_name)
+    model.eval()
+    hidden = model.config.hidden_size
+    embeddings = torch.zeros((len(image_urls), hidden), dtype=torch.float)
+    mask = torch.zeros(len(image_urls), dtype=torch.float)
+    encoded = 0
+    with torch.no_grad():
+        for idx, url in tqdm(list(enumerate(image_urls)), desc="Image embedding"):
+            if idx == 0 or not url:
+                continue
+            if encoded >= max_image_items:
+                break
+            image = _download_image(url, timeout)
+            if image is None:
+                continue
+            inputs = processor(images=image, return_tensors="pt").to(actual_device)
+            output = model(**inputs).pooler_output.squeeze(0).cpu().float()
+            embeddings[idx] = output
+            mask[idx] = 1.0
+            encoded += 1
+    return embeddings, mask
+
+
+def _download_image(url: str, timeout: int) -> Image.Image | None:
+    try:
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        image = Image.open(io.BytesIO(response.content)).convert("RGB")
+        return image
+    except Exception:
+        return None
+
+
+def zero_image_features(num_items: int, image_dim: int = 512) -> tuple[torch.Tensor, torch.Tensor]:
+    return torch.zeros((num_items, image_dim), dtype=torch.float), torch.zeros(num_items, dtype=torch.float)
+
+
+def normalize_feature_matrix(x: torch.Tensor) -> torch.Tensor:
+    if x.numel() == 0:
+        return x
+    mask = x.abs().sum(dim=1) > 0
+    if mask.any():
+        mean = x[mask].mean(dim=0, keepdim=True)
+        std = x[mask].std(dim=0, keepdim=True).clamp_min(1e-6)
+        x = x.clone()
+        x[mask] = (x[mask] - mean) / std
+    return x
