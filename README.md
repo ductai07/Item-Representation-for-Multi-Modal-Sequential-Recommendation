@@ -11,7 +11,7 @@ Mục tiêu của project là xây dựng hệ gợi ý sản phẩm tiếp theo
 - metadata dạng text;
 - ảnh sản phẩm;
 - tín hiệu cold-start;
-- transition graph và LightGCN;
+- modal-aware graphs: ID transition, text relation, image relation;
 - Mixture-of-Experts để vừa rerank vừa giải thích model đang dựa vào nguồn tín hiệu nào.
 
 ## Ý Tưởng Chính
@@ -25,7 +25,7 @@ Data processing + sequence split
         ↓
 Text embedding + Image embedding + Time feature
         ↓
-Train transition graph + LightGCN item embedding
+Train ID/Text/Image graphs + LightGCN graph embeddings
         ↓
 Stage 1: Candidate Generation
         ↓
@@ -40,7 +40,7 @@ Model lấy cảm hứng từ các hướng nghiên cứu:
 - **MAMEX**: router thích ứng với cold-start item.
 - **Molar**: alignment giữa collaborative ID signal và multimodal content.
 - **RecFormer-style item sentence**: biểu diễn item bằng câu metadata giàu thông tin.
-- **LightGCN**: học item graph embedding từ transition graph.
+- **LightGCN**: học item graph embedding từ từng modality-specific graph.
 
 Không fine-tune LLM làm core recommender. LLM/fine-tune chỉ phù hợp cho explanation layer hoặc future work.
 
@@ -53,8 +53,8 @@ ID embedding       = trainable item embedding
 Text embedding     = MiniLM/BGE embedding từ item sentence
 Image embedding    = CLIP image embedding
 Time embedding     = month, weekday, interval
-Graph embedding    = LightGCN item embedding
-Graph score        = transition score từ recent history tới candidate
+Graph embedding    = LightGCN embeddings từ ID/Text/Image graphs
+Graph score        = ID/Text/Image graph scores từ recent history tới candidate
 Cold feature       = log(popularity + 1), cold item flag
 ```
 
@@ -89,9 +89,15 @@ item_repr =
 
 Sequence backbone là SASRec-style Transformer. Stage 2 dùng representation này để rerank candidate pool.
 
-## Graph Expert
+## Modal-aware Graph Expert
 
-Graph được build từ **train split only** để tránh leakage.
+Graph được build từ **train split only** để tránh leakage. Bản hiện tại là MDSRec-inspired modal-aware graph, gồm 3 graph riêng:
+
+```text
+ID transition graph
+Text similarity graph
+Image similarity graph
+```
 
 Transition edge:
 
@@ -101,29 +107,36 @@ item_i → item_j
 
 nếu trong lịch sử train, nhiều user tương tác `item_i` rồi sau đó tới `item_j`.
 
-Graph Expert dùng hai tín hiệu:
+Text/Image graph được build bằng top-k cosine similarity trên `text_embeddings` và `image_embeddings`, theo chunk để tránh nổ RAM.
 
-1. **LightGCN item embedding**
+Graph Expert dùng hai nhóm tín hiệu:
+
+1. **LightGCN modal graph embeddings**
 
 ```text
 train sequences
       ↓
-transition graph
+ID/Text/Image graphs
       ↓
-LightGCN
+LightGCN per graph
       ↓
-graph_embeddings[item]
+id_graph_embeddings[item]
+text_graph_embeddings[item]
+image_graph_embeddings[item]
 ```
 
-2. **Graph transition score**
+2. **Modal graph scores**
 
 Với user history `[A, B, C]` và candidate `X`:
 
 ```text
-graph_score(X) =
+id_graph_score(X) =
   w(A → X) * decay_A
 + w(B → X) * decay_B
 + w(C → X) * decay_C
+
+text_graph_score(X)  = same scoring on text similarity graph
+image_graph_score(X) = same scoring on image similarity graph
 ```
 
 Recent item có trọng số cao hơn.
@@ -160,7 +173,7 @@ cstamoerec/
   config.py          # load YAML config
   data.py            # dataset, sequence, artifact helpers
   features.py        # text/image feature extraction
-  graph.py           # LightGCN + graph utilities
+  graph.py           # LightGCN + modal-aware graph utilities
   model.py           # CS-TAMoERec++ model
   metrics.py         # HR, MRR, NDCG, Recall, Coverage
   train.py           # train/evaluate logic
@@ -169,7 +182,7 @@ cstamoerec/
 
 scripts/
   prepare_amazon2023.py      # chuẩn bị dữ liệu Amazon Reviews 2023
-  train_lightgcn.py          # train LightGCN graph embeddings
+  train_lightgcn.py          # build/train ID/Text/Image LightGCN graph embeddings
   train_cstamoerec.py        # train CS-TAMoERec++
   evaluate_candidates.py     # đánh giá Stage 1 Recall@K
   rerank_candidates.py       # đánh giá Stage 1 + Stage 2
@@ -237,6 +250,9 @@ model:
   use_cold: true
   use_cross: true
   use_graph: true
+  use_id_graph: true
+  use_text_graph: true
+  use_image_graph: true
   graph_dim: 64
   graph_layers: 2
 
@@ -277,7 +293,7 @@ python scripts/prepare_amazon2023.py \
 
 Lưu ý: nếu bỏ ảnh thì `image` candidate gần như không có ý nghĩa và Image Expert chỉ là kiểm tra pipeline, không phải kết quả cuối.
 
-### 2. Train LightGCN Graph Embeddings
+### 2. Train Modal-aware LightGCN Graph Embeddings
 
 Chạy sau khi prepare xong:
 
@@ -285,13 +301,19 @@ Chạy sau khi prepare xong:
 python scripts/train_lightgcn.py \
   --config config/cstamoerec_all_beauty.yaml \
   --epochs 20 \
+  --similarity-topk 50 \
+  --similarity-batch-size 512 \
   --device cuda
 ```
 
 Script này sẽ ghi thêm:
 
 ```text
-features["graph_embeddings"]
+features["id_graph_embeddings"]
+features["text_graph_embeddings"]
+features["image_graph_embeddings"]
+features["text_graph_edges"]
+features["image_graph_edges"]
 ```
 
 vào:
@@ -363,6 +385,8 @@ Bảng nên đưa vào báo cáo:
 Candidate Source     Recall@50   Recall@100   Recall@200
 Popularity           ...
 Transition graph     ...
+Text graph           ...
+Image graph          ...
 ItemCF               ...
 Text similarity      ...
 Image similarity     ...
@@ -391,10 +415,10 @@ checkpoints/cstamoerec/two_stage_rerank_test.json
 Trong bước này, reranker nhận thêm:
 
 ```text
-graph_score(candidate | user_history)
+modal_graph_scores(candidate | user_history)
 ```
 
-để Graph Expert có tín hiệu transition trực tiếp.
+gồm `id`, `text`, `image` graph scores để Graph Expert có tín hiệu relation riêng theo modality.
 
 ## Ablation
 
@@ -404,7 +428,7 @@ Chạy ablation:
 python scripts/run_ablation.py \
   --config config/cstamoerec_all_beauty.yaml \
   --epochs 10 \
-  --variants full id_only no_text no_image no_time no_cold_router no_cross no_graph no_aux_loss no_router_balance
+  --variants full id_only no_text no_image no_time no_cold_router no_cross no_graph id_graph_only no_text_graph no_image_graph no_aux_loss no_router_balance
 ```
 
 Output:
@@ -423,6 +447,9 @@ no_image
 no_time
 no_cross
 no_graph
+id_graph_only
+no_text_graph
+no_image_graph
 no_aux_loss
 ```
 
@@ -537,7 +564,8 @@ Cache chứa:
 - target item;
 - top recommendations;
 - candidate sources;
-- graph transition score;
+- total graph score;
+- modal graph scores: ID/Text/Image;
 - expert weights;
 - main expert;
 - cold/warm flag;
@@ -558,7 +586,7 @@ Demo có:
 - candidate source;
 - image/title/category;
 - cold/warm label;
-- graph transition score;
+- modal graph scores;
 - expert weight chart;
 - explanation đơn giản dựa trên main expert và source.
 
@@ -664,6 +692,9 @@ Nên có các bảng/hình sau:
    - no_image;
    - no_time;
    - no_graph;
+   - id_graph_only;
+   - no_text_graph;
+   - no_image_graph;
    - no_aux_loss.
 
 5. Expert weight analysis:
@@ -682,10 +713,10 @@ Nên có các bảng/hình sau:
 
 1. Xây dựng pipeline Amazon Reviews 2023 All_Beauty cho multimodal sequential recommendation.
 2. Đề xuất CS-TAMoERec: Cold-start and Time-aware MoE item representation.
-3. Nâng cấp thành CS-TAMoERec++ với Graph Expert.
+3. Nâng cấp thành CS-TAMoERec++ với Modal-aware Graph Expert.
 4. Tích hợp ID, text, image, time, cross-modal và graph signal.
-5. Dùng LightGCN item transition graph embedding.
-6. Dùng graph transition score trong MoE reranker.
+5. Dùng LightGCN cho ID/Text/Image modality-specific graphs.
+6. Dùng modal graph scores trong MoE reranker.
 7. Có two-stage candidate generation + reranking.
 8. Có category loss, ID-MM alignment loss và router balance loss.
 9. Có ablation, perturbation, counterfactual và expert-weight analysis.

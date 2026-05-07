@@ -29,6 +29,9 @@ VARIANTS = {
     "no_cold_router": {"model.use_cold": False},
     "no_cross": {"model.use_cross": False},
     "no_graph": {"model.use_graph": False},
+    "id_graph_only": {"model.use_text_graph": False, "model.use_image_graph": False},
+    "no_text_graph": {"model.use_text_graph": False},
+    "no_image_graph": {"model.use_image_graph": False},
     "no_aux_loss": {
         "train.category_loss_weight": 0.0,
         "train.alignment_loss_weight": 0.0,
@@ -53,7 +56,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--variants",
         nargs="+",
-        default=["full", "id_only", "no_text", "no_image", "no_time", "no_cold_router", "no_graph"],
+        default=[
+            "full",
+            "id_only",
+            "no_text",
+            "no_image",
+            "no_time",
+            "no_cold_router",
+            "no_graph",
+            "id_graph_only",
+            "no_text_graph",
+            "no_image_graph",
+        ],
     )
     parser.add_argument("--epochs", type=int, default=0, help="Override epochs for quick ablations.")
     return parser.parse_args()
