@@ -20,6 +20,19 @@ from cstamoerec.data import (
 from cstamoerec.features import encode_images, encode_texts, normalize_feature_matrix, zero_image_features
 
 
+def load_amazon2023_config(dataset_name: str, config_name: str):
+    """Load Amazon Reviews 2023 config without relying on deprecated HF scripts."""
+    from datasets import load_dataset
+
+    parquet_glob = f"hf://datasets/{dataset_name}/{config_name}/*.parquet"
+    try:
+        return load_dataset("parquet", data_files={"full": parquet_glob}, split="full")
+    except Exception as parquet_error:
+        print(f"Parquet loading failed for {config_name}: {parquet_error}")
+        print("Falling back to legacy dataset loading. This may fail on new datasets versions.")
+        return load_dataset(dataset_name, config_name, split="full")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare Amazon Reviews 2023 data for CS-TAMoERec.")
     parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
@@ -36,10 +49,8 @@ def main() -> None:
     set_seed(cfg.data.seed)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    from datasets import load_dataset
-
     print(f"Loading reviews: {cfg.data.review_config}")
-    reviews = load_dataset(cfg.data.dataset_name, cfg.data.review_config, split="full", trust_remote_code=True)
+    reviews = load_amazon2023_config(cfg.data.dataset_name, cfg.data.review_config)
     if args.limit_reviews:
         reviews = reviews.select(range(min(args.limit_reviews, len(reviews))))
 
@@ -111,7 +122,7 @@ def main() -> None:
     )
 
     print(f"Loading metadata: {cfg.data.meta_config}")
-    meta_ds = load_dataset(cfg.data.dataset_name, cfg.data.meta_config, split="full", trust_remote_code=True)
+    meta_ds = load_amazon2023_config(cfg.data.dataset_name, cfg.data.meta_config)
     item_texts = ["[PAD]"]
     item_image_urls: list[str | None] = [None]
     category_names = {"Unknown": 0}

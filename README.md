@@ -40,6 +40,8 @@ Nguồn HuggingFace:
 McAuley-Lab/Amazon-Reviews-2023
 ```
 
+Code prepare đọc trực tiếp các file Parquet trên HuggingFace, không phụ thuộc `trust_remote_code`, vì các bản `datasets` mới không còn hỗ trợ dataset loading script.
+
 Các config sử dụng:
 
 ```text
