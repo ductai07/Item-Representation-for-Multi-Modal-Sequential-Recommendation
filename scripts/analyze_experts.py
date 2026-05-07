@@ -14,7 +14,7 @@ from cstamoerec.data import SequenceDataset, load_artifacts
 from cstamoerec.train import build_model, move_batch
 
 
-EXPERTS = ["ID", "Text", "Image", "Time", "Cross"]
+EXPERTS = ["ID", "Text", "Image", "Time", "Cross", "Graph"]
 
 
 class WeightBucket:
@@ -25,7 +25,12 @@ class WeightBucket:
     def update(self, weights: torch.Tensor) -> None:
         if weights.numel() == 0:
             return
-        weights = weights.detach().cpu()
+        weights = torch.nan_to_num(weights.detach().cpu(), nan=0.0, posinf=0.0, neginf=0.0)
+        if weights.size(-1) < self.sum.size(0):
+            pad = self.sum.size(0) - weights.size(-1)
+            weights = torch.nn.functional.pad(weights, (0, pad))
+        elif weights.size(-1) > self.sum.size(0):
+            weights = weights[..., : self.sum.size(0)]
         self.sum += weights.sum(dim=0)
         self.count += weights.size(0)
 

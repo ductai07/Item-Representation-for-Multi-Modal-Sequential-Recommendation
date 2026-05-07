@@ -28,6 +28,7 @@ VARIANTS = {
     "no_time": {"model.use_time": False},
     "no_cold_router": {"model.use_cold": False},
     "no_cross": {"model.use_cross": False},
+    "no_graph": {"model.use_graph": False},
     "no_aux_loss": {
         "train.category_loss_weight": 0.0,
         "train.alignment_loss_weight": 0.0,
@@ -49,7 +50,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run CS-TAMoERec ablation experiments.")
     parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
     parser.add_argument("--device", default=None)
-    parser.add_argument("--variants", nargs="+", default=["full", "id_only", "no_text", "no_image", "no_time", "no_cold_router"])
+    parser.add_argument(
+        "--variants",
+        nargs="+",
+        default=["full", "id_only", "no_text", "no_image", "no_time", "no_cold_router", "no_graph"],
+    )
     parser.add_argument("--epochs", type=int, default=0, help="Override epochs for quick ablations.")
     return parser.parse_args()
 

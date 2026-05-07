@@ -1,197 +1,78 @@
-# Item Representation for Multi-Modal Sequential Recommendation
+# CS-TAMoERec++
 
-## CS-TAMoERec
+**Cold-Start, Time-Aware and Graph-Enhanced Mixture-of-Experts Recommendation**
 
-**Cold-Start and Time-Aware Mixture-of-Experts for Multi-Modal Sequential Recommendation**
+Repo gốc dựa trên HM4SR/RecBole và vẫn giữ phần HM4SR làm paper nền/reference. Nhánh phát triển chính của project hiện tại nằm trong package `cstamoerec/`.
 
- Phần HM4SR cũ vẫn được giữ lại như paper nền/reference, còn phần phát triển chính nằm trong package `cstamoerec/`.
+Mục tiêu của project là xây dựng hệ gợi ý sản phẩm tiếp theo trong chuỗi hành vi người dùng, kết hợp:
 
-Mục tiêu của project là xây dựng mô hình gợi ý sản phẩm tiếp theo trong chuỗi hành vi người dùng, sử dụng đồng thời:
-
-- lịch sử tương tác theo thời gian,
-- ID sản phẩm,
-- text metadata của sản phẩm,
-- ảnh sản phẩm,
-- độ phổ biến/cold-start của item,
-- Mixture-of-Experts để giải thích mô hình đang dựa vào modality nào.
+- lịch sử tương tác theo thời gian;
+- ID sản phẩm;
+- metadata dạng text;
+- ảnh sản phẩm;
+- tín hiệu cold-start;
+- transition graph và LightGCN;
+- Mixture-of-Experts để vừa rerank vừa giải thích model đang dựa vào nguồn tín hiệu nào.
 
 ## Ý Tưởng Chính
 
-CS-TAMoERec lấy cảm hứng từ các hướng nghiên cứu:
-
-- **MM-GPT2Rec**: coi chuỗi item như chuỗi token trong NLP.
-- **HM4SR**: dùng multimodal representation, MoE và temporal signal.
-- **MAMEX**: router thích ứng với cold-start item.
-- **Molar**: giữ tín hiệu collaborative ID và multimodal content rồi align chúng.
-
-Khác với việc fine-tune GPT-2 nặng và khó kiểm soát, project này dùng **SASRec-style Transformer** làm sequential backbone.
-
-## Dataset
-
-Dataset chính:
+CS-TAMoERec++ dùng pipeline hai giai đoạn:
 
 ```text
-Amazon Reviews 2023 - All_Beauty
-```
-
-Nguồn HuggingFace:
-
-```text
-McAuley-Lab/Amazon-Reviews-2023
-```
-
-Code prepare đọc trực tiếp các file Parquet trên HuggingFace, không phụ thuộc `trust_remote_code`, vì các bản `datasets` mới không còn hỗ trợ dataset loading script.
-
-Các config sử dụng:
-
-```text
-raw_review_All_Beauty
-raw_meta_All_Beauty
-```
-
-Dataset này phù hợp vì có:
-
-- `user_id`
-- `parent_asin`
-- `timestamp`
-- review/rating
-- title
-- description
-- features
-- categories
-- store/brand
-- image URL
-
-## Pipeline Tổng Thể
-
-```text
-Amazon Reviews 2023
-        |
-        |-- raw_review_All_Beauty
-        |       |-- user_id
-        |       |-- parent_asin
-        |       |-- timestamp
-        |
-        |-- raw_meta_All_Beauty
-                |-- title
-                |-- store / brand
-                |-- categories
-                |-- description
-                |-- features
-                |-- image URL
-
+Amazon Reviews 2023 All_Beauty
         ↓
-
-Data Processing
-        |-- lọc user có ít nhất 5 interaction
-        |-- lọc item có ít nhất 2 interaction
-        |-- nếu giới hạn max_items:
-        |       |-- giữ item phổ biến
-        |       |-- luôn giữ valid/test target items
-        |       |-- giữ thêm một phần cold items
-        |-- sort interaction theo timestamp
-        |-- tạo chuỗi hành vi user
-        |-- train / valid / test theo sequence
-        |-- tính item_popularity chỉ trên train split
-        |-- gán cold_item_flag theo train popularity
-
+Data processing + sequence split
         ↓
-
-Feature Extraction
-        |-- Text sentence:
-        |       Title + Brand + Category + Features + Description
-        |
-        |-- Text Encoder:
-        |       MiniLM / BGE-small
-        |
-        |-- Image Encoder:
-        |       CLIP ViT-B/32
-        |
-        |-- Time Feature:
-        |       interval, month, weekday
-
+Text embedding + Image embedding + Time feature
         ↓
-
-CS-TAMoERec
-        |-- ID Expert
-        |-- Text Expert
-        |-- Image Expert
-        |-- Time Expert
-        |-- Cross Expert
-        |
-        |-- Cold-start & Time-aware Router
-        |
-        |-- Adaptive item representation
-
+Train transition graph + LightGCN item embedding
         ↓
-
-SASRec-style Transformer
-        ↓
-Next-item Prediction
-        ↓
-Top-K Recommendation + Expert Weight Explanation
-```
-
-## Pipeline 2-Stage Bản Nâng Cấp
-
-Bản mới của project không chỉ train một model rồi full-sort toàn bộ item. Project có thêm pipeline giống hệ thống recommendation thực tế:
-
-```text
 Stage 1: Candidate Generation
-        |-- Popularity candidates
-        |-- ItemCF / co-occurrence candidates
-        |-- Transition graph candidates
-        |-- Text similarity candidates
-        |-- Image similarity candidates
-        |
         ↓
-        Candidate pool 200-500 items
-
-Stage 2: CS-TAMoERec MoE Reranker
-        |-- score(user_history, candidate)
-        |-- expert weights
-        |-- candidate source explanation
+Stage 2: MoE Reranking
         ↓
-        Top-K recommendation
+Recommendation + Expert-weight Explanation + Demo UI
 ```
 
-Stage 1 giúp tăng Recall và mô phỏng hệ recommender thật. Stage 2 dùng MoE để rerank và giải thích vì sao item được chọn.
+Model lấy cảm hứng từ các hướng nghiên cứu:
 
-Lưu ý hiện tại:
+- **HM4SR**: time-aware multimodal sequential recommendation và MoE.
+- **MAMEX**: router thích ứng với cold-start item.
+- **Molar**: alignment giữa collaborative ID signal và multimodal content.
+- **RecFormer-style item sentence**: biểu diễn item bằng câu metadata giàu thông tin.
+- **LightGCN**: học item graph embedding từ transition graph.
 
-```text
-Transition graph đang được dùng như candidate source ở Stage 1.
-Graph chưa phải neural expert trong MoE.
-```
+Không fine-tune LLM làm core recommender. LLM/fine-tune chỉ phù hợp cho explanation layer hoặc future work.
 
-Đây là lựa chọn an toàn để có graph signal mà không phải train GNN phức tạp. Nếu còn thời gian có thể nâng cấp thành `Graph Expert`.
+## Kiến Trúc Hiện Tại
 
-## Kiến Trúc Mô Hình
-
-Với mỗi item trong sequence, mô hình tạo các representation:
+Với mỗi item, model tạo các representation:
 
 ```text
 ID embedding       = trainable item embedding
-Text embedding     = encoded product metadata
-Image embedding    = encoded product image
-Time embedding     = timestamp / interval feature
-Cold feature       = log(popularity + 1), cold_item_flag
+Text embedding     = MiniLM/BGE embedding từ item sentence
+Image embedding    = CLIP image embedding
+Time embedding     = month, weekday, interval
+Graph embedding    = LightGCN item embedding
+Graph score        = transition score từ recent history tới candidate
+Cold feature       = log(popularity + 1), cold item flag
 ```
 
-Sau đó đưa vào MoE:
+MoE hiện có 6 expert:
 
 ```text
-E_id      : ID Expert
-E_text    : Text Expert
-E_image   : Image Expert
-E_time    : Time Expert
-E_cross   : Cross-modal Expert
+E_id
+E_text
+E_image
+E_time
+E_cross
+E_graph
 ```
 
 Router học trọng số:
 
 ```text
-w_id, w_text, w_image, w_time, w_cross = softmax(MLP(router_input))
+w_id, w_text, w_image, w_time, w_cross, w_graph
 ```
 
 Item representation cuối:
@@ -203,108 +84,180 @@ item_repr =
   + w_image * E_image
   + w_time  * E_time
   + w_cross * E_cross
+  + w_graph * E_graph
 ```
 
-Chuỗi `item_repr` được đưa vào Transformer để dự đoán item tiếp theo.
+Sequence backbone là SASRec-style Transformer. Stage 2 dùng representation này để rerank candidate pool.
 
-## Loss Function
+## Graph Expert
 
-Mô hình dùng:
+Graph được build từ **train split only** để tránh leakage.
+
+Transition edge:
 
 ```text
-L = L_next + lambda1 * L_category + lambda2 * L_id_mm_alignment
+item_i → item_j
 ```
 
-Trong đó:
+nếu trong lịch sử train, nhiều user tương tác `item_i` rồi sau đó tới `item_j`.
 
-- `L_next`: cross entropy cho next-item prediction.
-- `L_category`: dự đoán category của item, lấy cảm hứng từ CP task của HM4SR.
-- `L_id_mm_alignment`: kéo ID-based representation và multimodal representation lại gần nhau.
-- `L_router_balance`: tránh router collapse vào một expert duy nhất.
+Graph Expert dùng hai tín hiệu:
 
-Loss thực tế trong code:
+1. **LightGCN item embedding**
 
 ```text
-L = L_next
-  + lambda1 * L_category
-  + lambda2 * L_id_mm_alignment
-  + lambda3 * L_router_balance
+train sequences
+      ↓
+transition graph
+      ↓
+LightGCN
+      ↓
+graph_embeddings[item]
 ```
+
+2. **Graph transition score**
+
+Với user history `[A, B, C]` và candidate `X`:
+
+```text
+graph_score(X) =
+  w(A → X) * decay_A
++ w(B → X) * decay_B
++ w(C → X) * decay_C
+```
+
+Recent item có trọng số cao hơn.
+
+## Dataset
+
+Dataset chính:
+
+```text
+McAuley-Lab/Amazon-Reviews-2023
+raw_review_All_Beauty
+raw_meta_All_Beauty
+```
+
+Các trường quan trọng:
+
+- `user_id`
+- `parent_asin`
+- `timestamp`
+- `rating`
+- `title`
+- `store` / brand
+- `categories`
+- `features`
+- `description`
+- image URL
+
+Prepare script đọc trực tiếp Parquet từ HuggingFace, không phụ thuộc `trust_remote_code`.
 
 ## Cấu Trúc Code
 
 ```text
 cstamoerec/
-  config.py          # load config yaml
-  data.py            # dataset, artifact, sequence processing helpers
+  config.py          # load YAML config
+  data.py            # dataset, sequence, artifact helpers
   features.py        # text/image feature extraction
-  model.py           # CS-TAMoERec model
-  metrics.py         # HR, NDCG, MRR, Recall, Coverage
+  graph.py           # LightGCN + graph utilities
+  model.py           # CS-TAMoERec++ model
+  metrics.py         # HR, MRR, NDCG, Recall, Coverage
   train.py           # train/evaluate logic
-  candidate.py       # popularity, ItemCF, transition, text/image candidates
-  reranker.py        # MoE reranking logic
+  candidate.py       # popularity, transition, itemcf, text/image candidates
+  reranker.py        # MoE candidate reranking
 
 scripts/
-  prepare_amazon2023.py      # chuẩn bị Amazon Reviews 2023
-  train_cstamoerec.py        # train model
-  run_ablation.py            # chạy ablation
-  evaluate_perturbation.py   # mask/shuffle text/image
-  evaluate_counterfactual.py # rank thay đổi khi bỏ text/image/time
+  prepare_amazon2023.py      # chuẩn bị dữ liệu Amazon Reviews 2023
+  train_lightgcn.py          # train LightGCN graph embeddings
+  train_cstamoerec.py        # train CS-TAMoERec++
+  evaluate_candidates.py     # đánh giá Stage 1 Recall@K
+  rerank_candidates.py       # đánh giá Stage 1 + Stage 2
+  run_ablation.py            # ablation
   analyze_experts.py         # phân tích expert weights
-  evaluate_candidates.py     # đánh giá Recall@K của candidate generation
-  rerank_candidates.py       # đánh giá two-stage reranking
-  export_demo_cache.py       # export cache cho demo Streamlit
+  evaluate_perturbation.py   # mask/shuffle modality
+  evaluate_counterfactual.py # counterfactual rank test
+  export_demo_cache.py       # export cache cho Streamlit demo
 
 config/
-  cstamoerec_all_beauty.yaml # config chính
+  cstamoerec_all_beauty.yaml
 
-demo_streamlit.py            # demo giao diện Streamlit
-requirements_cstamoerec.txt  # thư viện cần cài
-```
-
-HM4SR gốc vẫn nằm ở:
-
-```text
-recbole_model/HM4SR.py
-run_hm4sr.py
-recbole/
+demo_streamlit.py
+requirements_cstamoerec.txt
 ```
 
 ## Cài Đặt
 
-Trên Kaggle/Colab:
+Nên chạy từ root repo:
 
 ```bash
+cd HM4SR-main
 pip install -r requirements_cstamoerec.txt
 ```
 
-## Chuẩn Bị Dữ Liệu
-
-Chạy bản nhanh, chưa tải ảnh:
+Nếu chạy trên Kaggle/Colab/SSH, nên set:
 
 ```bash
-python scripts/prepare_amazon2023.py \
-  --config config/cstamoerec_all_beauty.yaml \
-  --skip-images
+export PYTHONPATH=$PWD:$PYTHONPATH
 ```
 
-Chạy bản đầy đủ có image embedding:
+Trên PowerShell:
+
+```powershell
+$env:PYTHONPATH="$PWD;$env:PYTHONPATH"
+```
+
+## Config Chính
+
+File:
+
+```text
+config/cstamoerec_all_beauty.yaml
+```
+
+Các cấu hình quan trọng hiện tại:
+
+```yaml
+data:
+  max_items: 30000
+  min_user_interactions: 5
+  min_item_interactions: 2
+  max_seq_len: 50
+  use_images: true
+  max_image_items: 8000
+
+model:
+  hidden_size: 128
+  n_layers: 2
+  n_heads: 4
+  num_experts: 6
+  use_text: true
+  use_image: true
+  use_time: true
+  use_cold: true
+  use_cross: true
+  use_graph: true
+  graph_dim: 64
+  graph_layers: 2
+
+train:
+  batch_size: 256
+  epochs: 20
+  lr: 0.001
+  num_eval_negatives: 0
+  device: cuda
+```
+
+## Pipeline Chạy Chuẩn
+
+### 1. Chuẩn Bị Dữ Liệu Đầy Đủ Có Ảnh
 
 ```bash
 python scripts/prepare_amazon2023.py \
   --config config/cstamoerec_all_beauty.yaml
 ```
 
-Debug nhanh với ít review:
-
-```bash
-python scripts/prepare_amazon2023.py \
-  --config config/cstamoerec_all_beauty.yaml \
-  --skip-images \
-  --limit-reviews 20000
-```
-
-Sau khi prepare, dữ liệu cache nằm ở:
+Output:
 
 ```text
 data/processed/all_beauty/
@@ -314,11 +267,45 @@ data/processed/all_beauty/
   item_cards.json
 ```
 
-## Train Model
+Nếu chỉ muốn smoke test nhanh, có thể bỏ ảnh:
+
+```bash
+python scripts/prepare_amazon2023.py \
+  --config config/cstamoerec_all_beauty.yaml \
+  --skip-images
+```
+
+Lưu ý: nếu bỏ ảnh thì `image` candidate gần như không có ý nghĩa và Image Expert chỉ là kiểm tra pipeline, không phải kết quả cuối.
+
+### 2. Train LightGCN Graph Embeddings
+
+Chạy sau khi prepare xong:
+
+```bash
+python scripts/train_lightgcn.py \
+  --config config/cstamoerec_all_beauty.yaml \
+  --epochs 20 \
+  --device cuda
+```
+
+Script này sẽ ghi thêm:
+
+```text
+features["graph_embeddings"]
+```
+
+vào:
+
+```text
+data/processed/all_beauty/features.pt
+```
+
+### 3. Train CS-TAMoERec++
 
 ```bash
 python scripts/train_cstamoerec.py \
-  --config config/cstamoerec_all_beauty.yaml
+  --config config/cstamoerec_all_beauty.yaml \
+  --device cuda
 ```
 
 Checkpoint tốt nhất:
@@ -327,44 +314,34 @@ Checkpoint tốt nhất:
 checkpoints/cstamoerec/best_cstamoerec.pt
 ```
 
-Kết quả training lưu ở:
+Training history:
 
 ```text
 checkpoints/cstamoerec/history.json
 ```
 
-## Baseline Và Ablation
+Khuyến nghị epoch:
 
-Baseline hiện có:
+- smoke test: `3` epoch;
+- chạy có thể báo cáo: `20` epoch;
+- nếu GPU ổn và metric còn tăng: `30-50` epoch với early stopping thủ công theo `NDCG@10`.
 
-- Popularity baseline
-- ID-only, gần tương đương SASRec-ID
-- No-text
-- No-image
-- No-time
-- No-cold-router
-- No-cross
-- No-aux-loss
-- No-router-balance
+Với bản hiện tại, checkpoint cũ 5 expert không tương thích trực tiếp với model mới 6 expert. Sau khi bật Graph Expert nên train lại từ đầu.
 
-Chạy ablation:
+## Stage 1: Candidate Generation
 
-```bash
-python scripts/run_ablation.py \
-  --config config/cstamoerec_all_beauty.yaml \
-  --variants full id_only no_text no_image no_time no_cold_router \
-  --epochs 5
-```
-
-Kết quả:
+Stage 1 tạo candidate pool bằng nhiều nguồn:
 
 ```text
-checkpoints/cstamoerec/ablation/ablation_summary.json
+popularity
+transition graph
+itemcf / co-occurrence
+text similarity
+image similarity
+combined
 ```
 
-## Candidate Generation Evaluation
-
-Đánh giá chất lượng Stage 1 bằng Recall@50/100/200:
+Đánh giá Recall@50/100/200:
 
 ```bash
 python scripts/evaluate_candidates.py \
@@ -374,7 +351,7 @@ python scripts/evaluate_candidates.py \
   --max-candidates 500
 ```
 
-Kết quả:
+Output:
 
 ```text
 checkpoints/cstamoerec/candidate_recall_test.json
@@ -385,16 +362,16 @@ Bảng nên đưa vào báo cáo:
 ```text
 Candidate Source     Recall@50   Recall@100   Recall@200
 Popularity           ...
-ItemCF               ...
 Transition graph     ...
+ItemCF               ...
 Text similarity      ...
 Image similarity     ...
 Combined             ...
 ```
 
-## Two-Stage Reranking Evaluation
+## Stage 2: MoE Reranking
 
-Đánh giá Stage 1 + Stage 2:
+Stage 2 rerank candidate pool bằng CS-TAMoERec++.
 
 ```bash
 python scripts/rerank_candidates.py \
@@ -405,164 +382,237 @@ python scripts/rerank_candidates.py \
   --max-candidates 300
 ```
 
-Kết quả:
+Output:
 
 ```text
 checkpoints/cstamoerec/two_stage_rerank_test.json
 ```
 
-## Perturbation Test
-
-Dùng để kiểm tra text/image có thật sự đóng góp không.
-
-```bash
-python scripts/evaluate_perturbation.py \
-  --config config/cstamoerec_all_beauty.yaml \
-  --checkpoint checkpoints/cstamoerec/best_cstamoerec.pt
-```
-
-Các mode:
-
-- `full`
-- `mask_text`
-- `mask_image`
-- `shuffle_text`
-- `shuffle_image`
-- `mask_text_image`
-
-Nếu metric giảm khi mask/shuffle, có thể kết luận modality đó có đóng góp thực sự.
-
-## Counterfactual Rank Test
-
-Dùng để xem thứ hạng thay đổi thế nào khi bỏ một modality:
-
-```bash
-python scripts/evaluate_counterfactual.py \
-  --config config/cstamoerec_all_beauty.yaml \
-  --checkpoint checkpoints/cstamoerec/best_cstamoerec.pt \
-  --limit-users 100
-```
-
-Kết quả:
+Trong bước này, reranker nhận thêm:
 
 ```text
-checkpoints/cstamoerec/counterfactual_test.json
+graph_score(candidate | user_history)
 ```
 
-Ví dụ case study:
+để Graph Expert có tín hiệu transition trực tiếp.
+
+## Ablation
+
+Chạy ablation:
+
+```bash
+python scripts/run_ablation.py \
+  --config config/cstamoerec_all_beauty.yaml \
+  --epochs 10 \
+  --variants full id_only no_text no_image no_time no_cold_router no_cross no_graph no_aux_loss no_router_balance
+```
+
+Output:
 
 ```text
-Original recommendation: rank #1
-After mask text: rank #5
-After mask image: rank #3
-After mask time: rank #7
+checkpoints/cstamoerec/ablation/ablation_summary.json
+```
+
+Các variant quan trọng cho báo cáo:
+
+```text
+full
+id_only
+no_text
+no_image
+no_time
+no_cross
+no_graph
+no_aux_loss
+```
+
+Bảng nên có:
+
+```text
+Variant                  NDCG@10   MRR@10   Recall@10
+ID-only                  ...
+CS-TAMoERec              ...
+CS-TAMoERec++ w/o graph  ...
+Full CS-TAMoERec++       ...
 ```
 
 ## Expert Weight Analysis
 
-Script này xuất trọng số trung bình của từng expert theo nhóm item:
-
-- all items
-- cold items
-- warm items
-- short time gap
-- long time gap
-
-Chạy:
+Phân tích router đang dựa vào expert nào:
 
 ```bash
 python scripts/analyze_experts.py \
   --config config/cstamoerec_all_beauty.yaml \
-  --checkpoint checkpoints/cstamoerec/best_cstamoerec.pt
+  --checkpoint checkpoints/cstamoerec/best_cstamoerec.pt \
+  --split test
 ```
 
-Kết quả:
+Output:
 
 ```text
 checkpoints/cstamoerec/expert_weights_test.json
 ```
 
-Ví dụ bảng mong muốn trong báo cáo:
+Các nhóm:
+
+- `cold_items`
+- `warm_items`
+- `short_time_gap`
+- `long_time_gap`
+- `all`
+
+Expert hiện tại:
 
 ```text
-Group           ID     Text   Image  Time   Cross
-Cold items      0.14   0.36   0.28   0.10   0.12
-Warm items      0.42   0.20   0.14   0.09   0.15
-Long time gap   0.22   0.21   0.17   0.28   0.12
+ID, Text, Image, Time, Cross, Graph
 ```
 
-## Demo Streamlit
+## Perturbation Test
 
-Sau khi train xong, nên export demo cache trước để demo chạy mượt:
+Dùng để kiểm tra modality có đóng góp thật không:
+
+```bash
+python scripts/evaluate_perturbation.py \
+  --config config/cstamoerec_all_beauty.yaml \
+  --checkpoint checkpoints/cstamoerec/best_cstamoerec.pt \
+  --split test
+```
+
+Các mode:
+
+```text
+full
+mask_text
+mask_image
+shuffle_text
+shuffle_image
+mask_text_image
+```
+
+Nếu metric giảm rõ khi mask/shuffle một modality, có thể lập luận modality đó có đóng góp.
+
+## Counterfactual Rank Test
+
+Dùng để xem ranking thay đổi thế nào khi bỏ text/image/time:
+
+```bash
+python scripts/evaluate_counterfactual.py \
+  --config config/cstamoerec_all_beauty.yaml \
+  --checkpoint checkpoints/cstamoerec/best_cstamoerec.pt \
+  --split test \
+  --limit-users 100
+```
+
+Output:
+
+```text
+checkpoints/cstamoerec/counterfactual_test.json
+```
+
+Phù hợp để chọn vài case study đưa vào báo cáo/demo.
+
+## Export Demo Cache
+
+Nên export cache trước để UI chạy mượt:
 
 ```bash
 python scripts/export_demo_cache.py \
   --config config/cstamoerec_all_beauty.yaml \
   --checkpoint checkpoints/cstamoerec/best_cstamoerec.pt \
   --num-users 50 \
-  --max-candidates 300
+  --per-source-k 100 \
+  --max-candidates 300 \
+  --topk 10
 ```
 
-Cache:
+Output:
 
 ```text
 demo_cache/recommendations.json
 ```
 
-Sau đó chạy demo:
+Cache chứa:
+
+- user history;
+- target item;
+- top recommendations;
+- candidate sources;
+- graph transition score;
+- expert weights;
+- main expert;
+- cold/warm flag;
+- image URL nếu có.
+
+## Demo UI
+
+Chạy Streamlit:
 
 ```bash
 streamlit run demo_streamlit.py
 ```
 
-Demo có các tab:
+Demo có:
 
-- lịch sử mua hàng của user,
-- top-10 sản phẩm được gợi ý,
-- ảnh sản phẩm,
-- category,
-- cold/warm label,
-- score,
-- expert weights.
-- candidate source,
-- explainability,
-- comparison/counterfactual analysis.
+- lịch sử tương tác của user;
+- top-k recommendation;
+- candidate source;
+- image/title/category;
+- cold/warm label;
+- graph transition score;
+- expert weight chart;
+- explanation đơn giản dựa trên main expert và source.
 
-Ý nghĩa demo:
-
-```text
-Nếu item là cold-start, router có thể tăng trọng số Text/Image.
-Nếu hành vi gần đây có khoảng cách thời gian lớn, Time Expert có thể tăng.
-Nếu item phổ biến/warm, ID Expert có thể đóng vai trò lớn hơn.
-```
+Nếu đã export cache, bật `Use demo cache` để chạy nhanh và ổn định.
 
 ## Metrics
 
-Các metric chính:
+Metric chính:
 
-- `HR@5`, `HR@10`, `HR@20`
-- `NDCG@5`, `NDCG@10`, `NDCG@20`
-- `MRR@5`, `MRR@10`, `MRR@20`
-- `Recall@5`, `Recall@10`, `Recall@20`
-- `Coverage@10`
+```text
+HR@5 / HR@10 / HR@20
+MRR@5 / MRR@10 / MRR@20
+NDCG@5 / NDCG@10 / NDCG@20
+Recall@5 / Recall@10 / Recall@20
+Coverage@10
+```
 
 Ngoài overall metric, project còn báo cáo:
 
-- cold item performance,
-- warm item performance,
-- perturbation result,
-- expert-weight analysis.
+- cold item performance;
+- warm item performance;
+- Stage 1 candidate recall;
+- Stage 2 reranking metric;
+- ablation;
+- perturbation;
+- expert-weight analysis;
+- counterfactual case study.
 
-## Gợi Ý Chạy Trên Colab/Kaggle
+## Gợi Ý Chạy Trên GPU
 
-Nếu GPU yếu hoặc muốn chạy thử nhanh:
+Với GPU ổn:
 
-Trong `config/cstamoerec_all_beauty.yaml`, giảm:
+```yaml
+data:
+  max_items: 30000
+  use_images: true
+  max_image_items: 8000
+
+model:
+  hidden_size: 128
+  n_layers: 2
+  n_heads: 4
+
+train:
+  batch_size: 256
+  epochs: 20
+```
+
+Nếu thiếu VRAM:
 
 ```yaml
 data:
   max_items: 10000
-  max_image_items: 0
+  max_image_items: 2000
 
 model:
   hidden_size: 64
@@ -571,35 +621,75 @@ model:
 
 train:
   batch_size: 128
-  epochs: 3
+  epochs: 10
 ```
 
-Và prepare bằng:
+Nếu chỉ debug pipeline:
 
 ```bash
 python scripts/prepare_amazon2023.py \
   --config config/cstamoerec_all_beauty.yaml \
-  --skip-images
+  --skip-images \
+  --limit-reviews 20000
 ```
 
-Khi mọi thứ chạy ổn, tăng dần:
+## Checklist Báo Cáo
 
-- `max_items`
-- `hidden_size`
-- `epochs`
-- bật image embedding.
+Nên có các bảng/hình sau:
 
-## Đóng Góp Chính Của Project
+1. Dataset statistics:
+   - số user;
+   - số item;
+   - số train/valid/test examples;
+   - số cold/warm item.
 
-1. Xây dựng pipeline Amazon Reviews 2023 `All_Beauty` cho multi-modal sequential recommendation.
-2. Đề xuất CS-TAMoERec: cold-start and time-aware MoE item representation.
-3. Kết hợp ID, text, image, time và cold-start feature trong adaptive item representation.
-4. Thêm auxiliary supervision: category loss và ID-multimodal alignment loss.
-5. Cung cấp explainability bằng expert weights.
-6. Có đầy đủ ablation, perturbation test và cold/warm evaluation.
-7. Bổ sung two-stage recommendation pipeline gồm candidate generation và MoE reranking.
-8. Thêm router balance loss để giảm nguy cơ MoE router collapse.
-9. Thêm counterfactual rank test để kiểm tra recommendation thay đổi khi bỏ text/image/time.
+2. Stage 1 candidate recall:
+   - popularity;
+   - transition;
+   - itemcf;
+   - text;
+   - image;
+   - combined.
+
+3. Main metric:
+   - HR@10;
+   - MRR@10;
+   - NDCG@10;
+   - Recall@10.
+
+4. Ablation:
+   - full;
+   - id_only;
+   - no_text;
+   - no_image;
+   - no_time;
+   - no_graph;
+   - no_aux_loss.
+
+5. Expert weight analysis:
+   - cold vs warm;
+   - short time gap vs long time gap.
+
+6. Demo/case study:
+   - user history;
+   - recommended item;
+   - candidate source;
+   - graph score;
+   - expert weights;
+   - explanation.
+
+## Đóng Góp Chính
+
+1. Xây dựng pipeline Amazon Reviews 2023 All_Beauty cho multimodal sequential recommendation.
+2. Đề xuất CS-TAMoERec: Cold-start and Time-aware MoE item representation.
+3. Nâng cấp thành CS-TAMoERec++ với Graph Expert.
+4. Tích hợp ID, text, image, time, cross-modal và graph signal.
+5. Dùng LightGCN item transition graph embedding.
+6. Dùng graph transition score trong MoE reranker.
+7. Có two-stage candidate generation + reranking.
+8. Có category loss, ID-MM alignment loss và router balance loss.
+9. Có ablation, perturbation, counterfactual và expert-weight analysis.
+10. Có Streamlit UI demo giải thích recommendation.
 
 ## Tài Liệu Tham Khảo
 
@@ -614,5 +704,3 @@ HM4SR gốc:
   year={2025}
 }
 ```
-
-Repo này ban đầu dựa trên HM4SR/RecBole, sau đó được mở rộng thêm nhánh CS-TAMoERec cho project môn học.
