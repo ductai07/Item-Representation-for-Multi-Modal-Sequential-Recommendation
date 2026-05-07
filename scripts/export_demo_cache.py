@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from cstamoerec.candidate import CandidateGenerator, graph_score_for_items
+from cstamoerec.candidate import CandidateGenerator, modal_graph_scores_for_items
 from cstamoerec.config import load_config
 from cstamoerec.data import SequenceDataset, load_artifacts, load_json
 from cstamoerec.reranker import rerank_candidates
@@ -79,7 +79,13 @@ def main() -> None:
         raw_ex = artifacts["examples"][args.split][idx]
         seq = [int(x) for x in raw_ex["seq"] if int(x) > 0]
         candidates = generator.generate(seq)
-        graph_scores = graph_score_for_items(seq, candidates.item_ids, generator.transition_graph)
+        graph_scores = modal_graph_scores_for_items(
+            seq,
+            candidates.item_ids,
+            generator.transition_graph,
+            generator.text_graph,
+            generator.image_graph,
+        )
         graph_score_by_item = {item: score for item, score in zip(candidates.item_ids, graph_scores)}
         reranked = rerank_candidates(model, batch, candidates.item_ids, device, topk=args.topk, graph_scores=graph_scores)
         history = [card_for_item(meta, item_cards, features, item) for item in seq[-10:]]
@@ -95,7 +101,12 @@ def main() -> None:
                     "score": reranked["scores"][rank - 1],
                     "sources": source_names,
                     "main_source": "+".join(source_names[:2]) if source_names else "reranker",
-                    "graph_score": float(graph_score_by_item.get(item_id, 0.0)),
+                    "graph_score": float(sum(graph_score_by_item.get(item_id, [0.0, 0.0, 0.0]))),
+                    "modal_graph_scores": {
+                        "id": float(graph_score_by_item.get(item_id, [0.0, 0.0, 0.0])[0]),
+                        "text": float(graph_score_by_item.get(item_id, [0.0, 0.0, 0.0])[1]),
+                        "image": float(graph_score_by_item.get(item_id, [0.0, 0.0, 0.0])[2]),
+                    },
                     "expert_weights": {names[i]: float(weights[i]) for i in range(len(names))},
                     "main_expert": names[int(torch.tensor(weights).argmax())],
                     "cold": int(features["item_popularity"][item_id]) <= meta["cold_threshold"],

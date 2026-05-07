@@ -56,6 +56,18 @@ def build_itemcf_graph(examples: list[dict[str, Any]], num_items: int, max_neigh
     return graph
 
 
+def build_graph_from_edges(edges: list[tuple[int, int]], max_neighbors: int = 200) -> dict[int, list[tuple[int, float]]]:
+    counts: dict[int, Counter[int]] = defaultdict(Counter)
+    for src, dst in edges:
+        if int(src) > 0 and int(dst) > 0 and int(src) != int(dst):
+            counts[int(src)][int(dst)] += 1
+    graph = {}
+    for src, counter in counts.items():
+        total = sum(counter.values())
+        graph[src] = [(dst, count / max(total, 1)) for dst, count in counter.most_common(max_neighbors)]
+    return graph
+
+
 def top_popularity(item_popularity: torch.Tensor, k: int, exclude: set[int] | None = None) -> list[tuple[int, float]]:
     exclude = exclude or set()
     scores = item_popularity.float().clone()
@@ -93,6 +105,19 @@ def graph_score_for_items(seq: list[int], item_ids: list[int], graph: dict[int, 
         for dst, weight in graph.get(item, []):
             scores[int(dst)] += float(weight) * decay
     return [float(scores.get(int(item), 0.0)) for item in item_ids]
+
+
+def modal_graph_scores_for_items(
+    seq: list[int],
+    item_ids: list[int],
+    id_graph: dict[int, list[tuple[int, float]]],
+    text_graph: dict[int, list[tuple[int, float]]] | None = None,
+    image_graph: dict[int, list[tuple[int, float]]] | None = None,
+) -> list[list[float]]:
+    id_scores = graph_score_for_items(seq, item_ids, id_graph)
+    text_scores = graph_score_for_items(seq, item_ids, text_graph or {})
+    image_scores = graph_score_for_items(seq, item_ids, image_graph or {})
+    return [[id_score, text_score, image_score] for id_score, text_score, image_score in zip(id_scores, text_scores, image_scores)]
 
 
 def feature_similarity_candidates(
@@ -159,6 +184,8 @@ class CandidateGenerator:
         train_examples = artifacts["examples"]["train"]
         self.transition_graph = build_transition_graph(train_examples, self.meta["num_items"])
         self.itemcf_graph = build_itemcf_graph(train_examples, self.meta["num_items"])
+        self.text_graph = build_graph_from_edges(self.features.get("text_graph_edges", []))
+        self.image_graph = build_graph_from_edges(self.features.get("image_graph_edges", []))
 
     def generate(
         self,
@@ -172,6 +199,8 @@ class CandidateGenerator:
             "popularity": top_popularity(self.features["item_popularity"], self.per_source_k, exclude),
             "transition": graph_candidates(seq, self.transition_graph, self.per_source_k, exclude),
             "itemcf": graph_candidates(seq, self.itemcf_graph, self.per_source_k, exclude),
+            "text_graph": graph_candidates(seq, self.text_graph, self.per_source_k, exclude),
+            "image_graph": graph_candidates(seq, self.image_graph, self.per_source_k, exclude),
             "text": feature_similarity_candidates(seq, self.features["text_embeddings"], self.per_source_k, exclude),
             "image": feature_similarity_candidates(
                 seq,

@@ -99,7 +99,8 @@ def render_cache_demo(cache: dict) -> None:
                 st.image(rec["image_url"], width=240)
             st.write("Category:", rec.get("category", "Unknown"))
             st.write("Candidate sources:", ", ".join(rec.get("sources", [])) or "reranker")
-            st.write("Graph transition score:", round(float(rec.get("graph_score", 0.0)), 4))
+            st.write("Total graph score:", round(float(rec.get("graph_score", 0.0)), 4))
+            st.write("Modal graph scores:", rec.get("modal_graph_scores", {}))
             st.write("Cold item:", rec.get("cold"))
             st.caption(rec.get("text", "")[:700])
         with cols[1]:

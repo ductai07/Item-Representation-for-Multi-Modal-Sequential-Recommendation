@@ -56,6 +56,8 @@ def main() -> None:
             "popularity": top_popularity(features["item_popularity"], args.per_source_k, exclude),
             "transition": graph_candidates(seq, generator.transition_graph, args.per_source_k, exclude),
             "itemcf": graph_candidates(seq, generator.itemcf_graph, args.per_source_k, exclude),
+            "text_graph": graph_candidates(seq, generator.text_graph, args.per_source_k, exclude),
+            "image_graph": graph_candidates(seq, generator.image_graph, args.per_source_k, exclude),
             "text": feature_similarity_candidates(seq, features["text_embeddings"], args.per_source_k, exclude),
             "image": feature_similarity_candidates(
                 seq,
