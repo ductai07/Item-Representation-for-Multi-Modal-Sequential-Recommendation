@@ -1,4 +1,4 @@
-# CS-TAMoERec++
+# Item-Representation-for-Multi-Modal-Sequential-Recommendation
 
 **Cold-Start, Time-Aware and Graph-Enhanced Mixture-of-Experts Recommendation**
 
