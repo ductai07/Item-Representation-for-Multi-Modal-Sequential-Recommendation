@@ -6,14 +6,24 @@ from cstamoerec.train import move_batch
 
 
 @torch.no_grad()
-def rerank_candidates(model, batch: dict[str, torch.Tensor], candidate_ids: list[int], device: str, topk: int = 10) -> dict:
+def rerank_candidates(
+    model,
+    batch: dict[str, torch.Tensor],
+    candidate_ids: list[int],
+    device: str,
+    topk: int = 10,
+    graph_scores: list[float] | None = None,
+) -> dict:
     if not candidate_ids:
         return {"item_ids": [], "scores": [], "expert_weights": []}
     candidate_tensor = torch.tensor(candidate_ids, dtype=torch.long, device=device)
     device_batch = move_batch({key: value.unsqueeze(0) if value.dim() == 0 else value for key, value in batch.items()}, device)
     if device_batch["seq"].dim() == 1:
         device_batch = {key: value.unsqueeze(0) for key, value in device_batch.items()}
-    output = model.score_candidates(device_batch, candidate_tensor)
+    graph_tensor = None
+    if graph_scores is not None:
+        graph_tensor = torch.tensor(graph_scores, dtype=torch.float, device=device)
+    output = model.score_candidates(device_batch, candidate_tensor, graph_scores=graph_tensor)
     scores = output["scores"][0]
     weights = output["expert_weights"][0]
     k = min(topk, scores.numel())

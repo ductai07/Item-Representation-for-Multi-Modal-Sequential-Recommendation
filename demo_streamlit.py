@@ -11,7 +11,11 @@ from cstamoerec.data import SequenceDataset, load_artifacts, load_json
 from cstamoerec.train import build_model, move_batch
 
 
-EXPERTS = ["ID", "Text", "Image", "Time", "Cross"]
+EXPERTS = ["ID", "Text", "Image", "Time", "Cross", "Graph"]
+
+
+def expert_names(weights: torch.Tensor) -> list[str]:
+    return EXPERTS[: int(weights.numel())]
 
 
 @st.cache_data
@@ -77,6 +81,7 @@ def render_cache_demo(cache: dict) -> None:
                         "score": round(r["score"], 4),
                         "source": r["main_source"],
                         "expert": r["main_expert"],
+                        "graph_score": round(float(r.get("graph_score", 0.0)), 4),
                         "cold": r["cold"],
                     }
                     for r in case["recommendations"]
@@ -94,6 +99,7 @@ def render_cache_demo(cache: dict) -> None:
                 st.image(rec["image_url"], width=240)
             st.write("Category:", rec.get("category", "Unknown"))
             st.write("Candidate sources:", ", ".join(rec.get("sources", [])) or "reranker")
+            st.write("Graph transition score:", round(float(rec.get("graph_score", 0.0)), 4))
             st.write("Cold item:", rec.get("cold"))
             st.caption(rec.get("text", "")[:700])
         with cols[1]:
@@ -160,12 +166,13 @@ def render_live_demo(config_path: str, checkpoint_path: str) -> None:
         rec_rows = []
         for rank, (item_id, score) in enumerate(zip(top_ids[0].tolist(), top_scores[0].tolist()), start=1):
             weights = adaptive["expert_weights"][0, rank - 1].detach().cpu()
+            names = expert_names(weights)
             rec_rows.append(
                 {
                     "rank": rank,
                     "product": item_title(meta, item_id),
                     "score": round(float(score), 4),
-                    "main_expert": EXPERTS[int(weights.argmax())],
+                    "main_expert": names[int(weights.argmax())],
                 }
             )
         st.dataframe(rec_rows, use_container_width=True)

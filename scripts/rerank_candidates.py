@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
-from cstamoerec.candidate import CandidateGenerator
+from cstamoerec.candidate import CandidateGenerator, graph_score_for_items
 from cstamoerec.config import load_config
 from cstamoerec.data import SequenceDataset, load_artifacts
 from cstamoerec.metrics import MetricAverager, topk_metrics
@@ -53,10 +53,12 @@ def main() -> None:
         candidates = generator.generate(seq)
         if int(raw_ex["target"]) not in candidates.item_ids:
             candidates.item_ids.append(int(raw_ex["target"]))
+        graph_scores = graph_score_for_items(seq, candidates.item_ids, generator.transition_graph)
         batch = {key: value.unsqueeze(0).to(device) for key, value in dataset[idx].items()}
         candidate_tensor = torch.tensor(candidates.item_ids, dtype=torch.long, device=device)
+        graph_tensor = torch.tensor(graph_scores, dtype=torch.float, device=device)
         with torch.no_grad():
-            scores = model.score_candidates(batch, candidate_tensor)["scores"].detach().cpu()
+            scores = model.score_candidates(batch, candidate_tensor, graph_scores=graph_tensor)["scores"].detach().cpu()
         target_pos = torch.tensor([candidates.item_ids.index(int(raw_ex["target"]))])
         avg.update(topk_metrics(scores, target_pos, cfg.train.eval_topk), 1)
     summary = avg.compute()

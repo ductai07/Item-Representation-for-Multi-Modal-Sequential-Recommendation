@@ -85,6 +85,16 @@ def graph_candidates(
     return [(item, float(score)) for item, score in scores.most_common(k)]
 
 
+def graph_score_for_items(seq: list[int], item_ids: list[int], graph: dict[int, list[tuple[int, float]]]) -> list[float]:
+    scores = Counter()
+    recent = [int(x) for x in seq if int(x) > 0][-5:]
+    for recency, item in enumerate(reversed(recent), start=1):
+        decay = 1.0 / recency
+        for dst, weight in graph.get(item, []):
+            scores[int(dst)] += float(weight) * decay
+    return [float(scores.get(int(item), 0.0)) for item in item_ids]
+
+
 def feature_similarity_candidates(
     seq: list[int],
     features: torch.Tensor,
