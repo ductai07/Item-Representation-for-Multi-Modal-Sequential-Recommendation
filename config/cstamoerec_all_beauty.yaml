@@ -35,6 +35,9 @@ model:
   use_cold: true
   use_cross: true
   use_graph: true
+  use_id_graph: true
+  use_text_graph: true
+  use_image_graph: true
 
 train:
   data_dir: data/processed/all_beauty

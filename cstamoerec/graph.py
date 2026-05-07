@@ -20,6 +20,39 @@ def transition_edges_from_examples(examples: list[dict[str, Any]]) -> list[tuple
     return list(counts.keys())
 
 
+def similarity_edges_from_features(
+    features: torch.Tensor,
+    topk: int,
+    batch_size: int,
+    device: str,
+    valid_mask: torch.Tensor | None = None,
+) -> list[tuple[int, int]]:
+    matrix = F.normalize(features.float().to(device), dim=-1)
+    num_items = matrix.size(0)
+    valid = torch.ones(num_items, dtype=torch.bool, device=device)
+    valid[0] = False
+    if valid_mask is not None:
+        valid &= valid_mask.to(device).bool()
+    valid_indices = valid.nonzero(as_tuple=False).view(-1)
+    if valid_indices.numel() == 0:
+        return []
+    edges = set()
+    actual_k = min(topk + 1, valid_indices.numel())
+    for start in range(0, valid_indices.numel(), batch_size):
+        rows = valid_indices[start : start + batch_size]
+        scores = matrix[rows] @ matrix.t()
+        scores[:, ~valid] = -1e9
+        for row_pos, item in enumerate(rows.tolist()):
+            scores[row_pos, item] = -1e9
+        values, idx = torch.topk(scores, k=actual_k, dim=1)
+        for src, neighbors, neighbor_scores in zip(rows.tolist(), idx.detach().cpu().tolist(), values.detach().cpu().tolist()):
+            for dst, score in zip(neighbors[:topk], neighbor_scores[:topk]):
+                if float(score) > -1e8 and int(dst) > 0 and int(dst) != int(src):
+                    edges.add((int(src), int(dst)))
+                    edges.add((int(dst), int(src)))
+    return list(edges)
+
+
 def build_norm_adj(num_items: int, edges: list[tuple[int, int]], device: str) -> torch.Tensor:
     if not edges:
         idx = torch.arange(num_items, device=device)

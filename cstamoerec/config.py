@@ -47,6 +47,9 @@ class ModelConfig:
     use_cold: bool = True
     use_cross: bool = True
     use_graph: bool = True
+    use_id_graph: bool = True
+    use_text_graph: bool = True
+    use_image_graph: bool = True
 
 
 @dataclass

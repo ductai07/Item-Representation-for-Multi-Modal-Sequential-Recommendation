@@ -48,8 +48,8 @@ class ColdStartTimeAwareMoE(nn.Module):
         self.image_expert = nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.GELU(), nn.Dropout(dropout))
         self.time_expert = nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.GELU(), nn.Dropout(dropout))
         self.cross_expert = nn.Sequential(nn.Linear(hidden_size * 3, hidden_size), nn.GELU(), nn.Dropout(dropout))
-        self.graph_expert = nn.Sequential(nn.Linear(hidden_size + 1, hidden_size), nn.GELU(), nn.Dropout(dropout))
-        router_in = hidden_size * 6 + 4
+        self.graph_expert = nn.Sequential(nn.Linear(hidden_size + 3, hidden_size), nn.GELU(), nn.Dropout(dropout))
+        router_in = hidden_size * 6 + 6
         self.router = nn.Sequential(
             nn.Linear(router_in, router_hidden),
             nn.GELU(),
@@ -80,7 +80,10 @@ class ColdStartTimeAwareMoE(nn.Module):
         log_pop = torch.log1p(popularity.float()).unsqueeze(-1)
         cold_flags = cold_flags.float().unsqueeze(-1)
         image_mask = image_mask.float().unsqueeze(-1)
-        graph_score = graph_score.float().unsqueeze(-1)
+        if graph_score.dim() == popularity.dim():
+            graph_score = graph_score.float().unsqueeze(-1).expand(*graph_score.shape, 3)
+        else:
+            graph_score = graph_score.float()
         cross_input = torch.cat([id_emb, text_emb, image_emb], dim=-1)
         graph_input = torch.cat([graph_emb, graph_score], dim=-1)
         expert_outputs = torch.stack(
@@ -118,6 +121,9 @@ class CSTAMoERec(nn.Module):
         image_mask: torch.Tensor,
         item_popularity: torch.Tensor,
         graph_embeddings: torch.Tensor | None = None,
+        id_graph_embeddings: torch.Tensor | None = None,
+        text_graph_embeddings: torch.Tensor | None = None,
+        image_graph_embeddings: torch.Tensor | None = None,
         hidden_size: int = 128,
         n_layers: int = 2,
         n_heads: int = 4,
@@ -135,6 +141,9 @@ class CSTAMoERec(nn.Module):
         use_cold: bool = True,
         use_cross: bool = True,
         use_graph: bool = True,
+        use_id_graph: bool = True,
+        use_text_graph: bool = True,
+        use_image_graph: bool = True,
     ) -> None:
         super().__init__()
         self.num_items = num_items
@@ -146,12 +155,17 @@ class CSTAMoERec(nn.Module):
         self.use_time = use_time
         self.use_cold = use_cold
         self.use_cross = use_cross
-        self.use_graph = use_graph and graph_embeddings is not None
+        self.use_graph = use_graph and any(
+            emb is not None for emb in (graph_embeddings, id_graph_embeddings, text_graph_embeddings, image_graph_embeddings)
+        )
+        self.use_id_graph = use_id_graph
+        self.use_text_graph = use_text_graph
+        self.use_image_graph = use_image_graph
         self.item_embedding = nn.Embedding(num_items, hidden_size, padding_idx=0)
         self.position_embedding = nn.Embedding(max_seq_len, hidden_size)
         self.text_projection = nn.Linear(text_dim, hidden_size)
         self.image_projection = nn.Linear(image_dim, hidden_size)
-        self.graph_projection = nn.Linear(graph_dim, hidden_size)
+        self.graph_projection = nn.Linear(graph_dim * 3, hidden_size)
         self.time_encoder = TimeEncoder(hidden_size, time_dim)
         self.moe = ColdStartTimeAwareMoE(hidden_size, router_hidden, dropout, use_cross=use_cross, use_graph=self.use_graph)
         encoder_layer = nn.TransformerEncoderLayer(
@@ -171,9 +185,42 @@ class CSTAMoERec(nn.Module):
         self.register_buffer("image_features", image_embeddings.float())
         self.register_buffer("image_mask", image_mask.float())
         self.register_buffer("item_popularity", item_popularity.long())
-        if graph_embeddings is None:
-            graph_embeddings = torch.zeros((num_items, graph_dim), dtype=torch.float)
-        self.register_buffer("graph_features", graph_embeddings.float())
+        if id_graph_embeddings is None:
+            id_graph_embeddings = graph_embeddings
+        if id_graph_embeddings is None:
+            id_graph_embeddings = torch.zeros((num_items, graph_dim), dtype=torch.float)
+        if text_graph_embeddings is None:
+            text_graph_embeddings = torch.zeros_like(id_graph_embeddings)
+        if image_graph_embeddings is None:
+            image_graph_embeddings = torch.zeros_like(id_graph_embeddings)
+        self.register_buffer("id_graph_features", id_graph_embeddings.float())
+        self.register_buffer("text_graph_features", text_graph_embeddings.float())
+        self.register_buffer("image_graph_features", image_graph_embeddings.float())
+
+    def project_graph_features(self, item_ids: torch.Tensor) -> torch.Tensor:
+        id_graph = self.id_graph_features[item_ids]
+        text_graph = self.text_graph_features[item_ids]
+        image_graph = self.image_graph_features[item_ids]
+        if not self.use_id_graph:
+            id_graph = torch.zeros_like(id_graph)
+        if not self.use_text_graph:
+            text_graph = torch.zeros_like(text_graph)
+        if not self.use_image_graph:
+            image_graph = torch.zeros_like(image_graph)
+        return self.graph_projection(torch.cat([id_graph, text_graph, image_graph], dim=-1))
+
+    def prepare_graph_scores(self, graph_scores: torch.Tensor, like: torch.Tensor) -> torch.Tensor:
+        if graph_scores.dim() == like.dim():
+            graph_scores = graph_scores.float().unsqueeze(-1).expand(*graph_scores.shape, 3)
+        else:
+            graph_scores = graph_scores.float()
+        if not self.use_id_graph:
+            graph_scores[..., 0] = 0.0
+        if not self.use_text_graph:
+            graph_scores[..., 1] = 0.0
+        if not self.use_image_graph:
+            graph_scores[..., 2] = 0.0
+        return graph_scores
 
     def represent_sequence(
         self,
@@ -185,7 +232,7 @@ class CSTAMoERec(nn.Module):
         id_emb = self.item_embedding(item_ids)
         text_emb = self.text_projection(self.text_features[item_ids])
         image_emb = self.image_projection(self.image_features[item_ids])
-        graph_emb = self.graph_projection(self.graph_features[item_ids])
+        graph_emb = self.project_graph_features(item_ids)
         time_emb = self.time_encoder(times)
         if not self.use_text:
             text_emb = torch.zeros_like(text_emb)
@@ -200,7 +247,7 @@ class CSTAMoERec(nn.Module):
         image_mask = self.image_mask[item_ids]
         if not self.use_image:
             image_mask = torch.zeros_like(image_mask)
-        graph_score = torch.zeros(item_ids.shape, dtype=torch.float, device=item_ids.device)
+        graph_score = torch.zeros((*item_ids.shape, 3), dtype=torch.float, device=item_ids.device)
         fused, weights = self.moe(id_emb, text_emb, image_emb, time_emb, graph_emb, graph_score, popularity, cold_flags, image_mask)
         positions = torch.arange(item_ids.size(1), device=item_ids.device).unsqueeze(0)
         fused = fused + self.position_embedding(positions)
@@ -224,7 +271,7 @@ class CSTAMoERec(nn.Module):
         id_emb = self.item_embedding(ids)
         text_emb = self.text_projection(self.text_features)
         image_emb = self.image_projection(self.image_features)
-        graph_emb = self.graph_projection(self.graph_features)
+        graph_emb = self.project_graph_features(ids)
         time_emb = torch.zeros_like(id_emb)
         popularity = self.item_popularity.to(ids.device)
         cold_flags = (popularity <= self.cold_threshold).float()
@@ -238,7 +285,7 @@ class CSTAMoERec(nn.Module):
             cold_flags = torch.zeros_like(cold_flags)
         if not self.use_graph:
             graph_emb = torch.zeros_like(graph_emb)
-        graph_score = torch.zeros((self.num_items,), dtype=torch.float, device=ids.device)
+        graph_score = torch.zeros((self.num_items, 3), dtype=torch.float, device=ids.device)
         fused, _ = self.moe(id_emb, text_emb, image_emb, time_emb, graph_emb, graph_score, popularity, cold_flags, image_mask)
         fused = fused.clone()
         fused[0].zero_()
@@ -291,13 +338,18 @@ class CSTAMoERec(nn.Module):
         if candidate_ids.dim() == 1:
             candidate_ids = candidate_ids.unsqueeze(0).expand(user_context.size(0), -1)
         if graph_scores is None:
-            graph_scores = torch.zeros(candidate_ids.shape, dtype=torch.float, device=candidate_ids.device)
+            graph_scores = torch.zeros((*candidate_ids.shape, 3), dtype=torch.float, device=candidate_ids.device)
         elif graph_scores.dim() == 1:
-            graph_scores = graph_scores.unsqueeze(0).expand(user_context.size(0), -1)
+            graph_scores = graph_scores.unsqueeze(0).expand(user_context.size(0), -1).unsqueeze(-1).expand(-1, -1, 3)
+        elif graph_scores.dim() == 2 and graph_scores.size(-1) == 3:
+            graph_scores = graph_scores.unsqueeze(0).expand(user_context.size(0), -1, -1)
+        elif graph_scores.dim() == 2:
+            graph_scores = graph_scores.unsqueeze(-1).expand(-1, -1, 3)
+        graph_scores = self.prepare_graph_scores(graph_scores, candidate_ids)
         id_emb = self.item_embedding(candidate_ids)
         text_emb = self.text_projection(self.text_features[candidate_ids])
         image_emb = self.image_projection(self.image_features[candidate_ids])
-        graph_emb = self.graph_projection(self.graph_features[candidate_ids])
+        graph_emb = self.project_graph_features(candidate_ids)
         time_emb = torch.zeros_like(id_emb)
         popularity = self.item_popularity[candidate_ids].to(candidate_ids.device)
         cold_flags = (popularity <= self.cold_threshold).float()

@@ -46,7 +46,14 @@ def build_model(cfg, artifacts: dict, device: str) -> CSTAMoERec:
     features = artifacts["features"]
     meta = artifacts["meta"]
     graph_embeddings = features.get("graph_embeddings")
-    graph_dim = int(graph_embeddings.size(1)) if graph_embeddings is not None else cfg.model.graph_dim
+    id_graph_embeddings = features.get("id_graph_embeddings")
+    text_graph_embeddings = features.get("text_graph_embeddings")
+    image_graph_embeddings = features.get("image_graph_embeddings")
+    graph_reference = next(
+        (emb for emb in (id_graph_embeddings, graph_embeddings, text_graph_embeddings, image_graph_embeddings) if emb is not None),
+        None,
+    )
+    graph_dim = int(graph_reference.size(1)) if graph_reference is not None else cfg.model.graph_dim
     return CSTAMoERec(
         num_items=meta["num_items"],
         num_categories=meta["num_categories"],
@@ -55,6 +62,9 @@ def build_model(cfg, artifacts: dict, device: str) -> CSTAMoERec:
         image_mask=features["image_mask"],
         item_popularity=features["item_popularity"],
         graph_embeddings=graph_embeddings,
+        id_graph_embeddings=id_graph_embeddings,
+        text_graph_embeddings=text_graph_embeddings,
+        image_graph_embeddings=image_graph_embeddings,
         hidden_size=cfg.model.hidden_size,
         n_layers=cfg.model.n_layers,
         n_heads=cfg.model.n_heads,
@@ -72,6 +82,9 @@ def build_model(cfg, artifacts: dict, device: str) -> CSTAMoERec:
         use_cold=cfg.model.use_cold,
         use_cross=cfg.model.use_cross,
         use_graph=cfg.model.use_graph,
+        use_id_graph=cfg.model.use_id_graph,
+        use_text_graph=cfg.model.use_text_graph,
+        use_image_graph=cfg.model.use_image_graph,
     ).to(device)
 
 
