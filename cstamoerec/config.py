@@ -34,16 +34,19 @@ class ModelConfig:
     n_heads: int = 4
     dropout: float = 0.2
     max_seq_len: int = 50
-    num_experts: int = 5
+    num_experts: int = 6
     text_dim: int = 384
     image_dim: int = 512
     time_dim: int = 16
     router_hidden: int = 256
+    graph_dim: int = 64
+    graph_layers: int = 2
     use_text: bool = True
     use_image: bool = True
     use_time: bool = True
     use_cold: bool = True
     use_cross: bool = True
+    use_graph: bool = True
 
 
 @dataclass

@@ -45,6 +45,8 @@ def make_loaders(data_dir: str, batch_size: int, num_workers: int) -> tuple[dict
 def build_model(cfg, artifacts: dict, device: str) -> CSTAMoERec:
     features = artifacts["features"]
     meta = artifacts["meta"]
+    graph_embeddings = features.get("graph_embeddings")
+    graph_dim = int(graph_embeddings.size(1)) if graph_embeddings is not None else cfg.model.graph_dim
     return CSTAMoERec(
         num_items=meta["num_items"],
         num_categories=meta["num_categories"],
@@ -52,6 +54,7 @@ def build_model(cfg, artifacts: dict, device: str) -> CSTAMoERec:
         image_embeddings=features["image_embeddings"],
         image_mask=features["image_mask"],
         item_popularity=features["item_popularity"],
+        graph_embeddings=graph_embeddings,
         hidden_size=cfg.model.hidden_size,
         n_layers=cfg.model.n_layers,
         n_heads=cfg.model.n_heads,
@@ -61,12 +64,14 @@ def build_model(cfg, artifacts: dict, device: str) -> CSTAMoERec:
         image_dim=meta["image_dim"],
         time_dim=cfg.model.time_dim,
         router_hidden=cfg.model.router_hidden,
+        graph_dim=graph_dim,
         cold_threshold=meta["cold_threshold"],
         use_text=cfg.model.use_text,
         use_image=cfg.model.use_image,
         use_time=cfg.model.use_time,
         use_cold=cfg.model.use_cold,
         use_cross=cfg.model.use_cross,
+        use_graph=cfg.model.use_graph,
     ).to(device)
 
 

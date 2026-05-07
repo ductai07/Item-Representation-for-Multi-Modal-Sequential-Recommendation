@@ -32,20 +32,29 @@ class TimeEncoder(nn.Module):
 
 
 class ColdStartTimeAwareMoE(nn.Module):
-    def __init__(self, hidden_size: int, router_hidden: int, dropout: float, use_cross: bool = True) -> None:
+    def __init__(
+        self,
+        hidden_size: int,
+        router_hidden: int,
+        dropout: float,
+        use_cross: bool = True,
+        use_graph: bool = True,
+    ) -> None:
         super().__init__()
         self.use_cross = use_cross
+        self.use_graph = use_graph
         self.id_expert = nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.GELU(), nn.Dropout(dropout))
         self.text_expert = nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.GELU(), nn.Dropout(dropout))
         self.image_expert = nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.GELU(), nn.Dropout(dropout))
         self.time_expert = nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.GELU(), nn.Dropout(dropout))
         self.cross_expert = nn.Sequential(nn.Linear(hidden_size * 3, hidden_size), nn.GELU(), nn.Dropout(dropout))
-        router_in = hidden_size * 5 + 3
+        self.graph_expert = nn.Sequential(nn.Linear(hidden_size + 1, hidden_size), nn.GELU(), nn.Dropout(dropout))
+        router_in = hidden_size * 6 + 4
         self.router = nn.Sequential(
             nn.Linear(router_in, router_hidden),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(router_hidden, 5),
+            nn.Linear(router_hidden, 6),
         )
         self.norm = nn.LayerNorm(hidden_size)
 
@@ -55,6 +64,8 @@ class ColdStartTimeAwareMoE(nn.Module):
         text_emb: torch.Tensor,
         image_emb: torch.Tensor,
         time_emb: torch.Tensor,
+        graph_emb: torch.Tensor,
+        graph_score: torch.Tensor,
         popularity: torch.Tensor,
         cold_flags: torch.Tensor,
         image_mask: torch.Tensor,
@@ -69,7 +80,9 @@ class ColdStartTimeAwareMoE(nn.Module):
         log_pop = torch.log1p(popularity.float()).unsqueeze(-1)
         cold_flags = cold_flags.float().unsqueeze(-1)
         image_mask = image_mask.float().unsqueeze(-1)
+        graph_score = graph_score.float().unsqueeze(-1)
         cross_input = torch.cat([id_emb, text_emb, image_emb], dim=-1)
+        graph_input = torch.cat([graph_emb, graph_score], dim=-1)
         expert_outputs = torch.stack(
             [
                 self.id_expert(id_emb),
@@ -77,16 +90,19 @@ class ColdStartTimeAwareMoE(nn.Module):
                 self.image_expert(image_emb),
                 self.time_expert(time_emb),
                 self.cross_expert(cross_input),
+                self.graph_expert(graph_input),
             ],
             dim=-2,
         )
         router_input = torch.cat(
-            [user_context, id_emb, text_emb, image_emb, time_emb, log_pop, cold_flags, image_mask],
+            [user_context, id_emb, text_emb, image_emb, time_emb, graph_emb, log_pop, cold_flags, image_mask, graph_score],
             dim=-1,
         )
         logits = self.router(router_input)
         if not self.use_cross:
             logits[..., 4] = -1e9
+        if not self.use_graph:
+            logits[..., 5] = -1e9
         weights = F.softmax(logits, dim=-1)
         fused = torch.sum(expert_outputs * weights.unsqueeze(-1), dim=-2)
         return self.norm(fused), weights
@@ -101,6 +117,7 @@ class CSTAMoERec(nn.Module):
         image_embeddings: torch.Tensor,
         image_mask: torch.Tensor,
         item_popularity: torch.Tensor,
+        graph_embeddings: torch.Tensor | None = None,
         hidden_size: int = 128,
         n_layers: int = 2,
         n_heads: int = 4,
@@ -110,12 +127,14 @@ class CSTAMoERec(nn.Module):
         image_dim: int = 512,
         time_dim: int = 16,
         router_hidden: int = 256,
+        graph_dim: int = 64,
         cold_threshold: int = 5,
         use_text: bool = True,
         use_image: bool = True,
         use_time: bool = True,
         use_cold: bool = True,
         use_cross: bool = True,
+        use_graph: bool = True,
     ) -> None:
         super().__init__()
         self.num_items = num_items
@@ -127,12 +146,14 @@ class CSTAMoERec(nn.Module):
         self.use_time = use_time
         self.use_cold = use_cold
         self.use_cross = use_cross
+        self.use_graph = use_graph and graph_embeddings is not None
         self.item_embedding = nn.Embedding(num_items, hidden_size, padding_idx=0)
         self.position_embedding = nn.Embedding(max_seq_len, hidden_size)
         self.text_projection = nn.Linear(text_dim, hidden_size)
         self.image_projection = nn.Linear(image_dim, hidden_size)
+        self.graph_projection = nn.Linear(graph_dim, hidden_size)
         self.time_encoder = TimeEncoder(hidden_size, time_dim)
-        self.moe = ColdStartTimeAwareMoE(hidden_size, router_hidden, dropout, use_cross=use_cross)
+        self.moe = ColdStartTimeAwareMoE(hidden_size, router_hidden, dropout, use_cross=use_cross, use_graph=self.use_graph)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size,
             nhead=n_heads,
@@ -150,6 +171,9 @@ class CSTAMoERec(nn.Module):
         self.register_buffer("image_features", image_embeddings.float())
         self.register_buffer("image_mask", image_mask.float())
         self.register_buffer("item_popularity", item_popularity.long())
+        if graph_embeddings is None:
+            graph_embeddings = torch.zeros((num_items, graph_dim), dtype=torch.float)
+        self.register_buffer("graph_features", graph_embeddings.float())
 
     def represent_sequence(
         self,
@@ -161,6 +185,7 @@ class CSTAMoERec(nn.Module):
         id_emb = self.item_embedding(item_ids)
         text_emb = self.text_projection(self.text_features[item_ids])
         image_emb = self.image_projection(self.image_features[item_ids])
+        graph_emb = self.graph_projection(self.graph_features[item_ids])
         time_emb = self.time_encoder(times)
         if not self.use_text:
             text_emb = torch.zeros_like(text_emb)
@@ -170,10 +195,13 @@ class CSTAMoERec(nn.Module):
             time_emb = torch.zeros_like(time_emb)
         if not self.use_cold:
             cold_flags = torch.zeros_like(cold_flags)
+        if not self.use_graph:
+            graph_emb = torch.zeros_like(graph_emb)
         image_mask = self.image_mask[item_ids]
         if not self.use_image:
             image_mask = torch.zeros_like(image_mask)
-        fused, weights = self.moe(id_emb, text_emb, image_emb, time_emb, popularity, cold_flags, image_mask)
+        graph_score = torch.zeros(item_ids.shape, dtype=torch.float, device=item_ids.device)
+        fused, weights = self.moe(id_emb, text_emb, image_emb, time_emb, graph_emb, graph_score, popularity, cold_flags, image_mask)
         positions = torch.arange(item_ids.size(1), device=item_ids.device).unsqueeze(0)
         fused = fused + self.position_embedding(positions)
         padding_mask = item_ids.eq(0)
@@ -196,6 +224,7 @@ class CSTAMoERec(nn.Module):
         id_emb = self.item_embedding(ids)
         text_emb = self.text_projection(self.text_features)
         image_emb = self.image_projection(self.image_features)
+        graph_emb = self.graph_projection(self.graph_features)
         time_emb = torch.zeros_like(id_emb)
         popularity = self.item_popularity.to(ids.device)
         cold_flags = (popularity <= self.cold_threshold).float()
@@ -207,7 +236,10 @@ class CSTAMoERec(nn.Module):
             image_mask = torch.zeros_like(image_mask)
         if not self.use_cold:
             cold_flags = torch.zeros_like(cold_flags)
-        fused, _ = self.moe(id_emb, text_emb, image_emb, time_emb, popularity, cold_flags, image_mask)
+        if not self.use_graph:
+            graph_emb = torch.zeros_like(graph_emb)
+        graph_score = torch.zeros((self.num_items,), dtype=torch.float, device=ids.device)
+        fused, _ = self.moe(id_emb, text_emb, image_emb, time_emb, graph_emb, graph_score, popularity, cold_flags, image_mask)
         fused = fused.clone()
         fused[0].zero_()
         return fused
@@ -234,25 +266,38 @@ class CSTAMoERec(nn.Module):
             "item_repr": item_repr,
         }
 
-    def score_candidates(self, batch: dict[str, torch.Tensor], candidate_ids: torch.Tensor) -> dict[str, torch.Tensor]:
+    def score_candidates(
+        self,
+        batch: dict[str, torch.Tensor],
+        candidate_ids: torch.Tensor,
+        graph_scores: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
         context, _, _, _ = self.represent_sequence(
             batch["seq"],
             batch["times"],
             batch["popularity"],
             batch["cold_flags"],
         )
-        candidate_repr, weights = self.represent_candidates_adaptive(context, candidate_ids)
+        candidate_repr, weights = self.represent_candidates_adaptive(context, candidate_ids, graph_scores)
         scores = torch.einsum("bh,bnh->bn", context, candidate_repr)
         return {"scores": scores, "expert_weights": weights}
 
     def represent_candidates_adaptive(
-        self, user_context: torch.Tensor, candidate_ids: torch.Tensor
+        self,
+        user_context: torch.Tensor,
+        candidate_ids: torch.Tensor,
+        graph_scores: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if candidate_ids.dim() == 1:
             candidate_ids = candidate_ids.unsqueeze(0).expand(user_context.size(0), -1)
+        if graph_scores is None:
+            graph_scores = torch.zeros(candidate_ids.shape, dtype=torch.float, device=candidate_ids.device)
+        elif graph_scores.dim() == 1:
+            graph_scores = graph_scores.unsqueeze(0).expand(user_context.size(0), -1)
         id_emb = self.item_embedding(candidate_ids)
         text_emb = self.text_projection(self.text_features[candidate_ids])
         image_emb = self.image_projection(self.image_features[candidate_ids])
+        graph_emb = self.graph_projection(self.graph_features[candidate_ids])
         time_emb = torch.zeros_like(id_emb)
         popularity = self.item_popularity[candidate_ids].to(candidate_ids.device)
         cold_flags = (popularity <= self.cold_threshold).float()
@@ -264,7 +309,9 @@ class CSTAMoERec(nn.Module):
             image_mask = torch.zeros_like(image_mask)
         if not self.use_cold:
             cold_flags = torch.zeros_like(cold_flags)
-        fused, weights = self.moe(id_emb, text_emb, image_emb, time_emb, popularity, cold_flags, image_mask, user_context)
+        if not self.use_graph:
+            graph_emb = torch.zeros_like(graph_emb)
+        fused, weights = self.moe(id_emb, text_emb, image_emb, time_emb, graph_emb, graph_scores, popularity, cold_flags, image_mask, user_context)
         return fused, weights
 
 

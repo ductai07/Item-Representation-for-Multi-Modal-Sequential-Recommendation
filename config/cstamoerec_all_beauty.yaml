@@ -22,16 +22,19 @@ model:
   n_heads: 4
   dropout: 0.2
   max_seq_len: 50
-  num_experts: 5
+  num_experts: 6
   text_dim: 384
   image_dim: 512
   time_dim: 16
   router_hidden: 256
+  graph_dim: 64
+  graph_layers: 2
   use_text: true
   use_image: true
   use_time: true
   use_cold: true
   use_cross: true
+  use_graph: true
 
 train:
   data_dir: data/processed/all_beauty
