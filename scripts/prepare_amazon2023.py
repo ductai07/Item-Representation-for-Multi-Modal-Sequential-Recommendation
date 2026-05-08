@@ -33,6 +33,15 @@ def load_amazon2023_config(dataset_name: str, config_name: str):
         return load_dataset(dataset_name, config_name, split="full")
 
 
+def category_from_config(config_name: str) -> str:
+    name = config_name
+    for prefix in ("raw_meta_", "raw_review_"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    return name.replace("_", " ").strip() or "Unknown"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare Amazon Reviews 2023 data for CS-TAMoERec.")
     parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
@@ -142,8 +151,11 @@ def main() -> None:
     for idx in range(1, len(id2item)):
         asin = id2item[idx]
         meta = raw_meta_by_item.get(asin, {})
-        text = text_from_meta(meta)
         cat = main_category(meta)
+        if cat == "Unknown":
+            cat = category_from_config(cfg.data.meta_config)
+            meta = {**meta, "main_category": cat}
+        text = text_from_meta(meta)
         if cat not in category_names:
             category_names[cat] = len(category_names)
         item_categories[idx] = category_names[cat]

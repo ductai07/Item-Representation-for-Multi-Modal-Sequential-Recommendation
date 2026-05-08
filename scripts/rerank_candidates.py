@@ -11,7 +11,8 @@ from cstamoerec.candidate import CandidateGenerator, modal_graph_scores_for_item
 from cstamoerec.config import load_config
 from cstamoerec.data import SequenceDataset, load_artifacts
 from cstamoerec.metrics import MetricAverager, topk_metrics
-from cstamoerec.train import build_model
+from cstamoerec.reranker import source_prior_for_items
+from cstamoerec.train import build_model, mask_seen_items
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,6 +24,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-candidates", type=int, default=300)
     parser.add_argument("--limit-users", type=int, default=0)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--mode", choices=["candidate", "source", "static", "adaptive", "hybrid"], default="candidate")
+    parser.add_argument("--prior-weight", type=float, default=1.0)
+    parser.add_argument("--model-weight", type=float, default=0.05)
     return parser.parse_args()
 
 
@@ -64,11 +68,24 @@ def main() -> None:
         candidate_tensor = torch.tensor(candidates.item_ids, dtype=torch.long, device=device)
         graph_tensor = torch.tensor(graph_scores, dtype=torch.float, device=device)
         with torch.no_grad():
-            scores = model.score_candidates(batch, candidate_tensor, graph_scores=graph_tensor)["scores"].detach().cpu()
+            if args.mode == "candidate":
+                scores = -torch.arange(len(candidates.item_ids), dtype=torch.float).view(1, -1)
+            elif args.mode == "source":
+                scores = source_prior_for_items(candidates.item_ids, candidates.sources, graph_scores).view(1, -1)
+            elif args.mode == "adaptive":
+                scores = model.score_candidates(batch, candidate_tensor, graph_scores=graph_tensor)["scores"].detach().cpu()
+            else:
+                full_scores = mask_seen_items(model(batch)["scores"], batch["seq"])
+                scores = full_scores[:, candidate_tensor].detach().cpu()
+                if args.mode == "hybrid":
+                    prior = source_prior_for_items(candidates.item_ids, candidates.sources, graph_scores).view(1, -1)
+                    if scores.numel() > 1 and float(scores.std()) > 1e-8:
+                        scores = (scores - scores.mean()) / scores.std()
+                    scores = args.model_weight * scores + args.prior_weight * prior
         target_pos = torch.tensor([candidates.item_ids.index(int(raw_ex["target"]))])
         avg.update(topk_metrics(scores, target_pos, cfg.train.eval_topk), 1)
     summary = avg.compute()
-    out_path = Path(cfg.train.save_dir) / f"two_stage_rerank_{args.split}.json"
+    out_path = Path(cfg.train.save_dir) / f"two_stage_rerank_{args.mode}_{args.split}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

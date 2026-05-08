@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--per-source-k", type=int, default=100)
     parser.add_argument("--max-candidates", type=int, default=300)
     parser.add_argument("--topk", type=int, default=10)
+    parser.add_argument("--mode", choices=["candidate", "source", "static", "adaptive", "hybrid"], default="candidate")
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -87,7 +88,16 @@ def main() -> None:
             generator.image_graph,
         )
         graph_score_by_item = {item: score for item, score in zip(candidates.item_ids, graph_scores)}
-        reranked = rerank_candidates(model, batch, candidates.item_ids, device, topk=args.topk, graph_scores=graph_scores)
+        reranked = rerank_candidates(
+            model,
+            batch,
+            candidates.item_ids,
+            device,
+            topk=args.topk,
+            graph_scores=graph_scores,
+            sources=candidates.sources,
+            mode=args.mode,
+        )
         history = [card_for_item(meta, item_cards, features, item) for item in seq[-10:]]
         recs = []
         for rank, item_id in enumerate(reranked["item_ids"], start=1):

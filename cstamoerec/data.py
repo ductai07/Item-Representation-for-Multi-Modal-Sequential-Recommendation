@@ -23,9 +23,10 @@ def text_from_meta(meta: dict[str, Any]) -> str:
     parts = []
     title = meta.get("title")
     store = meta.get("store") or meta.get("brand")
-    categories = meta.get("categories")
+    categories = meta.get("categories") or meta.get("main_category")
     description = meta.get("description")
     features = meta.get("features")
+    details = meta.get("details")
     if title:
         parts.append(f"Title: {title}")
     if store:
@@ -46,6 +47,19 @@ def text_from_meta(meta: dict[str, Any]) -> str:
             parts.append("Features: " + "; ".join(str(x) for x in features[:8]))
         else:
             parts.append(f"Features: {features}")
+    if details:
+        try:
+            parsed = json.loads(details) if isinstance(details, str) else details
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            useful = []
+            for key in ("Brand", "Color", "Scent", "Skin Type", "Hair Type", "Item Form", "Item Volume", "Product Benefits"):
+                value = parsed.get(key)
+                if value:
+                    useful.append(f"{key}: {value}")
+            if useful:
+                parts.append("Details: " + "; ".join(useful[:8]))
     if description:
         if isinstance(description, list):
             desc = " ".join(str(x) for x in description[:4])
@@ -78,6 +92,8 @@ def first_image_url(meta: dict[str, Any]) -> str | None:
 
 
 def main_category(meta: dict[str, Any]) -> str:
+    if meta.get("main_category"):
+        return str(meta["main_category"])
     categories = meta.get("categories")
     if isinstance(categories, list) and categories:
         first = categories[0]

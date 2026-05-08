@@ -42,6 +42,14 @@ def make_loaders(data_dir: str, batch_size: int, num_workers: int) -> tuple[dict
     return artifacts, loaders
 
 
+def mask_seen_items(scores: torch.Tensor, seq: torch.Tensor) -> torch.Tensor:
+    masked = scores.clone()
+    seen = seq.clamp_min(0)
+    masked.scatter_(1, seen, -1e9)
+    masked[:, 0] = -1e9
+    return masked
+
+
 def build_model(cfg, artifacts: dict, device: str) -> CSTAMoERec:
     features = artifacts["features"]
     meta = artifacts["meta"]
@@ -125,7 +133,7 @@ def evaluate(model, loader, cfg, device: str, item_popularity: torch.Tensor, spl
     for batch in tqdm(loader, desc=f"eval-{split_name}", leave=False):
         batch = move_batch(batch, device)
         output = model(batch)
-        scores = output["scores"]
+        scores = mask_seen_items(output["scores"], batch["seq"])
         metrics = topk_metrics(scores, batch["target"], cfg.train.eval_topk)
         avg.update(metrics, batch["seq"].size(0))
 
@@ -158,6 +166,7 @@ def popularity_baseline(loader, cfg, item_popularity: torch.Tensor, device: str)
     for batch in loader:
         batch = move_batch(batch, device)
         batch_scores = scores.expand(batch["seq"].size(0), -1)
+        batch_scores = mask_seen_items(batch_scores, batch["seq"])
         avg.update(topk_metrics(batch_scores, batch["target"], cfg.train.eval_topk), batch["seq"].size(0))
     return avg.compute()
 
