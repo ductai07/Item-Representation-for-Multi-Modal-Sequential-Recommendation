@@ -154,7 +154,32 @@ Best practical run for stronger metrics:
 powershell -ExecutionPolicy Bypass -File scripts/run_min4_best.ps1
 ```
 
-This uses `config/cstamoerec_all_beauty_min4.yaml`: minimum 4 user interactions, 15k items, up to 10k images, candidate reranker training, learned source ranker, sampled-negative baselines, true two-stage metrics, perturbation, counterfactual, report export, and demo cache export.
+This uses `config/cstamoerec_all_beauty_min4.yaml`: minimum 4 user interactions, 30k items, up to 30k images, candidate reranker training, learned source ranker, sampled-negative baselines, true two-stage metrics, perturbation, counterfactual, report export, and demo cache export.
+
+## 14. Benchmark-First Protocol for Paper Comparison
+
+For a defensible comparison with older methods, do not use the small All_Beauty demo run as the main evidence. Use the benchmark configs and protocol in `BENCHMARK_PROTOCOL.md`.
+
+Recommended main benchmark:
+
+```bash
+chmod +x scripts/run_benchmark_pipeline.sh
+bash scripts/run_benchmark_pipeline.sh config/cstamoerec_amazon_video_games_50k.yaml
+```
+
+Optional stronger suite:
+
+```bash
+chmod +x scripts/run_benchmark_pipeline.sh scripts/run_benchmark_suite.sh
+bash scripts/run_benchmark_suite.sh
+```
+
+Report two tables:
+
+- 99-negative ranking table: comparable with classic baselines and many older sequential-rec papers.
+- Full-pool two-stage table: real retrieval + reranking quality, including `CandidatePoolHitRate` and candidate recall.
+
+Use Video Games as the main dataset, then Sports and Toys as secondary datasets if GPU time allows.
 
 Recommended quick/dense setting:
 
