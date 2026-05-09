@@ -1,0 +1,11 @@
+data/
+checkpoints/
+demo_cache/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pt
+*.pth
+*.ckpt
+*.log
+.ipynb_checkpoints/

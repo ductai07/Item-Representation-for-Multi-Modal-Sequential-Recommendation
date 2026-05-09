@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import torch
 from tqdm import tqdm
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from cstamoerec.config import load_config
 from cstamoerec.data import (
@@ -24,13 +30,14 @@ def load_amazon2023_config(dataset_name: str, config_name: str):
     """Load Amazon Reviews 2023 config without relying on deprecated HF scripts."""
     from datasets import load_dataset
 
+    token = os.environ.get("HF_TOKEN")
     parquet_glob = f"hf://datasets/{dataset_name}/{config_name}/*.parquet"
     try:
-        return load_dataset("parquet", data_files={"full": parquet_glob}, split="full")
+        return load_dataset("parquet", data_files={"full": parquet_glob}, split="full", token=token)
     except Exception as parquet_error:
         print(f"Parquet loading failed for {config_name}: {parquet_error}")
         print("Falling back to legacy dataset loading. This may fail on new datasets versions.")
-        return load_dataset(dataset_name, config_name, split="full")
+        return load_dataset(dataset_name, config_name, split="full", token=token, trust_remote_code=True)
 
 
 def category_from_config(config_name: str) -> str:
@@ -44,7 +51,7 @@ def category_from_config(config_name: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare Amazon Reviews 2023 data for CS-TAMoERec.")
-    parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
+    parser.add_argument("--config", default="config/cstamoerec_all_beauty_dense10k.yaml")
     parser.add_argument("--device", default=None)
     parser.add_argument("--skip-images", action="store_true")
     parser.add_argument("--text-batch-size", type=int, default=128)
@@ -92,6 +99,7 @@ def main() -> None:
 
     top_budget = max(cfg.data.max_items - len(valid_test_targets), 0)
     cold_budget = int(cfg.data.max_items * cfg.data.cold_item_keep_ratio)
+    target_items = sorted(valid_test_targets, key=lambda item: (-item_counter[item], item))
     popular_items = [item for item, _ in item_counter.most_common(top_budget)]
     cold_items = [
         item
@@ -100,7 +108,7 @@ def main() -> None:
     ][:cold_budget]
     selected_items = []
     seen_items = set()
-    for item in list(valid_test_targets) + popular_items + cold_items:
+    for item in target_items + popular_items + cold_items:
         if item in eligible_items and item not in seen_items:
             selected_items.append(item)
             seen_items.add(item)
@@ -119,12 +127,73 @@ def main() -> None:
         iid = item2id[item]
         sequences[uid].append((iid, timestamp))
 
-    examples = build_examples(sequences, cfg.data.max_seq_len)
+    examples = build_examples(sequences, cfg.data.max_seq_len, min_events=cfg.data.min_user_interactions)
+
+    train_used: set[int] = set()
+    for ex in examples["train"]:
+        train_used.add(int(ex["target"]))
+        for item in ex["seq"]:
+            if int(item) > 0:
+                train_used.add(int(item))
+
+    items_before = len(item2id) - 1
+    examples_before = {k: len(v) for k, v in examples.items()}
+
+    old_id2item = [None] * len(item2id)
+    for item, idx in item2id.items():
+        old_id2item[idx] = item
+    new_item2id = {"[PAD]": 0}
+    old_to_new: dict[int, int] = {0: 0}
+    for old_idx in sorted(train_used):
+        asin = old_id2item[old_idx]
+        new_idx = len(new_item2id)
+        new_item2id[asin] = new_idx
+        old_to_new[old_idx] = new_idx
+
+    filtered_examples: dict[str, list[dict]] = {"train": [], "valid": [], "test": []}
+    for split_name, exs in examples.items():
+        for ex in exs:
+            target_old = int(ex["target"])
+            if target_old not in old_to_new:
+                continue
+            seq_pairs = [
+                (old_to_new[int(i)], int(t))
+                for i, t in zip(ex["seq"], ex["times"])
+                if int(i) in old_to_new and int(i) > 0
+            ]
+            if not seq_pairs and split_name == "train":
+                continue
+            new_seq = [p[0] for p in seq_pairs]
+            new_times = [p[1] for p in seq_pairs]
+            if not new_seq:
+                new_seq = [0]
+                new_times = [int(ex.get("target_time", 0))]
+            filtered_examples[split_name].append({
+                "user_id": int(ex["user_id"]),
+                "seq": new_seq,
+                "times": new_times,
+                "target": old_to_new[target_old],
+                "target_time": int(ex["target_time"]),
+            })
+
+    item2id = new_item2id
+    examples = filtered_examples
+
+    train_popularity = torch.zeros(len(item2id), dtype=torch.long)
     for ex in examples["train"]:
         train_popularity[int(ex["target"])] += 1
         for item in ex["seq"]:
-            train_popularity[int(item)] += 1
-    used_items = {item for split in examples.values() for ex in split for item in ex["seq"] + [ex["target"]]}
+            if int(item) > 0:
+                train_popularity[int(item)] += 1
+    used_items = {item for split in examples.values() for ex in split for item in ex["seq"] + [ex["target"]] if int(item) > 0}
+    print(
+        f"Catalog filter: items {items_before} -> {len(item2id) - 1} (kept items appearing in train)"
+    )
+    print(
+        f"Examples train={examples_before['train']}->{len(examples['train'])}, "
+        f"valid={examples_before['valid']}->{len(examples['valid'])}, "
+        f"test={examples_before['test']}->{len(examples['test'])}"
+    )
     print(
         f"Prepared examples train={len(examples['train'])}, valid={len(examples['valid'])}, "
         f"test={len(examples['test'])}, users={len(sequences)}, items={len(item2id) - 1}, used_items={len(used_items)}"

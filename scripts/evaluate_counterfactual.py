@@ -48,8 +48,8 @@ def item_card(meta: dict, item_cards: dict, item_id: int) -> dict:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate counterfactual rank changes for modality removal.")
-    parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
-    parser.add_argument("--checkpoint", default="checkpoints/cstamoerec/best_cstamoerec.pt")
+    parser.add_argument("--config", default="config/cstamoerec_all_beauty_dense10k.yaml")
+    parser.add_argument("--checkpoint", default="checkpoints/cstamoerec_dense10k/best_cstamoerec.pt")
     parser.add_argument("--split", default="test", choices=["valid", "test"])
     parser.add_argument("--limit-users", type=int, default=100)
     parser.add_argument("--device", default=None)

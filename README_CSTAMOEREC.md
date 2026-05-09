@@ -144,6 +144,40 @@ python scripts/export_demo_cache.py \
 streamlit run demo_streamlit.py
 ```
 
+## 13. Recommended Full Experiment Protocol
+
+Use the same protocol for every method before comparing with old baselines.
+
+Best practical run for stronger metrics:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_min4_best.ps1
+```
+
+This uses `config/cstamoerec_all_beauty_min4.yaml`: minimum 4 user interactions, 15k items, up to 10k images, candidate reranker training, learned source ranker, sampled-negative baselines, true two-stage metrics, perturbation, counterfactual, report export, and demo cache export.
+
+Recommended quick/dense setting:
+
+```bash
+python scripts/prepare_amazon2023.py --config config/cstamoerec_all_beauty_dense5k.yaml
+python scripts/train_lightgcn.py --config config/cstamoerec_all_beauty_dense5k.yaml --epochs 20 --similarity-topk 50 --device cuda
+python scripts/train_cstamoerec.py --config config/cstamoerec_all_beauty_dense5k.yaml --device cuda
+```
+
+Current dense10k artifact:
+
+```bash
+python scripts/evaluate_traditional_baselines.py --config config/cstamoerec_all_beauty_dense10k.yaml --checkpoint checkpoints/cstamoerec_dense10k/best_cstamoerec.pt
+python scripts/evaluate_candidates.py --config config/cstamoerec_all_beauty_dense10k.yaml --split test --per-source-k 200 --max-candidates 500
+python scripts/rerank_candidates.py --config config/cstamoerec_all_beauty_dense10k.yaml --checkpoint checkpoints/cstamoerec_dense10k/best_cstamoerec.pt --mode hybrid --split test --per-source-k 200 --max-candidates 500
+python scripts/evaluate_perturbation.py --config config/cstamoerec_all_beauty_dense10k.yaml --checkpoint checkpoints/cstamoerec_dense10k/best_cstamoerec.pt
+python scripts/evaluate_counterfactual.py --config config/cstamoerec_all_beauty_dense10k.yaml --checkpoint checkpoints/cstamoerec_dense10k/best_cstamoerec.pt --limit-users 200
+python scripts/summarize_experiments.py --config config/cstamoerec_all_beauty_dense10k.yaml
+python scripts/export_demo_cache.py --config config/cstamoerec_all_beauty_dense10k.yaml --checkpoint checkpoints/cstamoerec_dense10k/best_cstamoerec.pt --mode hybrid --only-hits --num-users 50
+```
+
+Important: `scripts/rerank_candidates.py` now reports true end-to-end two-stage metrics by default. It does not append the held-out target when candidate generation misses it. Use `--append-target-for-oracle` only for reranker diagnostics.
+
 ## Expert Hiện Tại
 
 ```text

@@ -14,7 +14,7 @@ from scripts.prepare_amazon2023 import category_from_config, load_amazon2023_con
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Refresh text/category artifacts without re-encoding images.")
-    parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
+    parser.add_argument("--config", default="config/cstamoerec_all_beauty_dense10k.yaml")
     parser.add_argument("--data-dir", default=None, help="Artifact directory to refresh. Defaults to data.output_dir.")
     parser.add_argument("--device", default=None)
     parser.add_argument("--text-batch-size", type=int, default=128)

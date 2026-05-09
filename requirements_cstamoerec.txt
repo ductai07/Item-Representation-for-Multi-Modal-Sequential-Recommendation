@@ -1,6 +1,6 @@
 torch
 torchvision
-datasets
+datasets == 2.18.0
 sentence-transformers
 transformers
 accelerate

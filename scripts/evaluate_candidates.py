@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 
+import torch
 from tqdm import tqdm
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from cstamoerec.candidate import (
     CandidateGenerator,
@@ -13,20 +19,25 @@ from cstamoerec.candidate import (
     combine_candidate_sources,
     feature_similarity_candidates,
     graph_candidates,
+    sasrec_candidates,
     top_popularity,
 )
 from cstamoerec.config import load_config
-from cstamoerec.data import load_artifacts
+from cstamoerec.data import SequenceDataset, load_artifacts
+from cstamoerec.train import build_model
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate candidate-generation recall.")
-    parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
+    parser.add_argument("--config", default="config/cstamoerec_all_beauty_dense10k.yaml")
     parser.add_argument("--split", default="test", choices=["valid", "test"])
     parser.add_argument("--per-source-k", type=int, default=200)
     parser.add_argument("--max-candidates", type=int, default=500)
     parser.add_argument("--limit-users", type=int, default=0)
     parser.add_argument("--topk", nargs="+", type=int, default=[50, 100, 200])
+    parser.add_argument("--checkpoint", default=None)
+    parser.add_argument("--include-model-candidates", action="store_true", help="Add top candidates from a trained CS-TAMoERec checkpoint.")
+    parser.add_argument("--device", default=None)
     return parser.parse_args()
 
 
@@ -46,9 +57,27 @@ def main() -> None:
     if args.limit_users:
         examples = examples[: args.limit_users]
     features = artifacts["features"]
+    model = None
+    dataset = None
+    device = args.device or (cfg.train.device if torch.cuda.is_available() else "cpu")
+    if args.include_model_candidates:
+        if not args.checkpoint:
+            raise ValueError("--checkpoint is required when --include-model-candidates is set.")
+        model = build_model(cfg, artifacts, device)
+        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model"])
+        model.eval()
+        meta = artifacts["meta"]
+        dataset = SequenceDataset(
+            artifacts["examples"][args.split],
+            meta["max_seq_len"],
+            features["item_popularity"],
+            features["item_categories"],
+            meta["cold_threshold"],
+        )
     source_metrics = defaultdict(list)
 
-    for ex in tqdm(examples, desc="candidate-eval"):
+    for idx, ex in enumerate(tqdm(examples, desc="candidate-eval")):
         seq = [int(x) for x in ex["seq"] if int(x) > 0]
         target = int(ex["target"])
         exclude = set(seq)
@@ -67,8 +96,15 @@ def main() -> None:
                 valid_mask=features.get("image_mask"),
             ),
         }
+        if model is not None and dataset is not None:
+            batch = {key: value.unsqueeze(0).to(device) for key, value in dataset[idx].items()}
+            named["sasrec"] = sasrec_candidates(model, batch, args.per_source_k)
         for source, candidates in named.items():
             source_metrics[source].append(candidate_recall([item for item, _ in candidates], target, args.topk))
+        if model is not None and dataset is not None:
+            batch = {key: value.unsqueeze(0).to(device) for key, value in dataset[idx].items()}
+            combined_with_model = generator.generate(seq, model=model, batch=batch, include_sasrec=True)
+            source_metrics["combined_with_model"].append(candidate_recall(combined_with_model.item_ids, target, args.topk))
         combined = combine_candidate_sources(named, args.max_candidates)
         source_metrics["combined"].append(candidate_recall(combined.item_ids, target, args.topk))
 

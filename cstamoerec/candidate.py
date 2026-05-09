@@ -149,7 +149,14 @@ def feature_similarity_candidates(
 
 def sasrec_candidates(model, batch: dict[str, torch.Tensor], k: int) -> list[tuple[int, float]]:
     with torch.no_grad():
-        scores = model(batch)["scores"][0]
+        scores = model(batch)["scores"][0].clone()
+        seq = batch.get("seq")
+        if seq is not None:
+            history = seq[0] if seq.dim() == 2 else seq
+            seen = history[history > 0].long()
+            if seen.numel():
+                scores[seen] = -1e9
+        scores[0] = -1e9
         values, indices = torch.topk(scores, k=min(k, scores.numel()))
     return [(int(i), float(v)) for i, v in zip(indices.tolist(), values.tolist()) if int(i) > 0]
 

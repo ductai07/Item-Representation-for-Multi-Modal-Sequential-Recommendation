@@ -51,7 +51,7 @@ def set_nested(obj, dotted_key: str, value) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run CS-TAMoERec ablation experiments.")
-    parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
+    parser.add_argument("--config", default="config/cstamoerec_all_beauty_dense10k.yaml")
     parser.add_argument("--device", default=None)
     parser.add_argument(
         "--variants",

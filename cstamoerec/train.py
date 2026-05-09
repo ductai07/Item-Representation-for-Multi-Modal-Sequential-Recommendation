@@ -42,12 +42,61 @@ def make_loaders(data_dir: str, batch_size: int, num_workers: int) -> tuple[dict
     return artifacts, loaders
 
 
-def mask_seen_items(scores: torch.Tensor, seq: torch.Tensor) -> torch.Tensor:
+def mask_seen_items(scores: torch.Tensor, seq: torch.Tensor, targets: torch.Tensor | None = None) -> torch.Tensor:
     masked = scores.clone()
+    if targets is not None:
+        target_scores = scores.gather(1, targets.view(-1, 1))
     seen = seq.clamp_min(0)
     masked.scatter_(1, seen, -1e9)
     masked[:, 0] = -1e9
+    if targets is not None:
+        masked.scatter_(1, targets.view(-1, 1), target_scores)
     return masked
+
+
+def sample_eval_candidates(
+    scores: torch.Tensor,
+    targets: torch.Tensor,
+    seq: torch.Tensor,
+    num_negatives: int,
+    generator: torch.Generator,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    batch_size, num_items = scores.shape
+    max_available = []
+    seq_lists = []
+    for row in range(batch_size):
+        forbidden = set(seq[row][seq[row] > 0].detach().cpu().tolist())
+        forbidden.add(int(targets[row].item()))
+        forbidden.add(0)
+        seq_lists.append(forbidden)
+        max_available.append(max(num_items - len(forbidden), 0))
+    actual_negatives = min(num_negatives, min(max_available) if max_available else 0)
+    if actual_negatives <= 0:
+        sampled_scores = scores.gather(1, targets.view(-1, 1))
+        sampled_targets = torch.zeros(batch_size, dtype=torch.long, device=scores.device)
+        sampled_ids = targets.view(-1, 1)
+        return sampled_scores, sampled_targets, sampled_ids
+    sampled_ids = torch.empty(batch_size, actual_negatives + 1, dtype=torch.long, device=scores.device)
+    sampled_targets = torch.randint(0, actual_negatives + 1, (batch_size,), device=scores.device, generator=generator)
+    for row in range(batch_size):
+        forbidden = set(seq_lists[row])
+        negatives: list[int] = []
+        while len(negatives) < actual_negatives:
+            draw_size = max((actual_negatives - len(negatives)) * 3, 32)
+            draws = torch.randint(1, num_items, (draw_size,), device=scores.device, generator=generator)
+            for item_id in draws.detach().cpu().tolist():
+                if item_id not in forbidden:
+                    forbidden.add(item_id)
+                    negatives.append(item_id)
+                    if len(negatives) == actual_negatives:
+                        break
+        row_items = torch.tensor(negatives, dtype=torch.long, device=scores.device)
+        target_pos = int(sampled_targets[row].item())
+        sampled_ids[row, :target_pos] = row_items[:target_pos]
+        sampled_ids[row, target_pos] = targets[row]
+        sampled_ids[row, target_pos + 1 :] = row_items[target_pos:]
+    sampled_scores = scores.gather(1, sampled_ids)
+    return sampled_scores, sampled_targets, sampled_ids
 
 
 def build_model(cfg, artifacts: dict, device: str) -> CSTAMoERec:
@@ -130,24 +179,39 @@ def evaluate(model, loader, cfg, device: str, item_popularity: torch.Tensor, spl
     warm_avg = MetricAverager()
     topk_items: list[int] = []
     item_popularity = item_popularity.to(device)
+    generator = torch.Generator(device=device).manual_seed(cfg.train.seed + (17 if split_name == "valid" else 29))
     for batch in tqdm(loader, desc=f"eval-{split_name}", leave=False):
         batch = move_batch(batch, device)
         output = model(batch)
-        scores = mask_seen_items(output["scores"], batch["seq"])
-        metrics = topk_metrics(scores, batch["target"], cfg.train.eval_topk)
+        scores = mask_seen_items(output["scores"], batch["seq"], batch["target"])
+        metric_targets = batch["target"]
+        candidate_ids = None
+        if cfg.train.num_eval_negatives > 0:
+            scores, metric_targets, candidate_ids = sample_eval_candidates(
+                scores,
+                batch["target"],
+                batch["seq"],
+                cfg.train.num_eval_negatives,
+                generator,
+            )
+        metrics = topk_metrics(scores, metric_targets, cfg.train.eval_topk)
         avg.update(metrics, batch["seq"].size(0))
 
         max_k = min(max(cfg.train.eval_topk), scores.size(1))
         _, top_idx = torch.topk(scores, k=max_k, dim=1)
-        topk_items.extend(top_idx[:, :10].reshape(-1).detach().cpu().tolist())
+        if candidate_ids is not None:
+            top_items = candidate_ids.gather(1, top_idx[:, :10])
+        else:
+            top_items = top_idx[:, :10]
+        topk_items.extend(top_items.reshape(-1).detach().cpu().tolist())
 
         target_pop = item_popularity[batch["target"]]
         cold_mask = target_pop <= cfg.data.cold_threshold
         warm_mask = ~cold_mask
         if cold_mask.any():
-            cold_avg.update(topk_metrics(scores[cold_mask], batch["target"][cold_mask], cfg.train.eval_topk), int(cold_mask.sum()))
+            cold_avg.update(topk_metrics(scores[cold_mask], metric_targets[cold_mask], cfg.train.eval_topk), int(cold_mask.sum()))
         if warm_mask.any():
-            warm_avg.update(topk_metrics(scores[warm_mask], batch["target"][warm_mask], cfg.train.eval_topk), int(warm_mask.sum()))
+            warm_avg.update(topk_metrics(scores[warm_mask], metric_targets[warm_mask], cfg.train.eval_topk), int(warm_mask.sum()))
 
     result = avg.compute()
     for key, value in cold_avg.compute().items():
@@ -166,7 +230,7 @@ def popularity_baseline(loader, cfg, item_popularity: torch.Tensor, device: str)
     for batch in loader:
         batch = move_batch(batch, device)
         batch_scores = scores.expand(batch["seq"].size(0), -1)
-        batch_scores = mask_seen_items(batch_scores, batch["seq"])
+        batch_scores = mask_seen_items(batch_scores, batch["seq"], batch["target"])
         avg.update(topk_metrics(batch_scores, batch["target"], cfg.train.eval_topk), batch["seq"].size(0))
     return avg.compute()
 
@@ -209,7 +273,7 @@ def run_training_experiment(cfg, device: str, run_name: str | None = None) -> di
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train CS-TAMoERec.")
-    parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
+    parser.add_argument("--config", default="config/cstamoerec_all_beauty_dense10k.yaml")
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 

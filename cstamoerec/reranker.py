@@ -52,6 +52,8 @@ def rerank_candidates(
     mode: str = "candidate",
     prior_weight: float = 1.0,
     model_weight: float = 0.05,
+    source_ranker=None,
+    source_features: torch.Tensor | None = None,
 ) -> dict:
     if not candidate_ids:
         return {"item_ids": [], "scores": [], "expert_weights": []}
@@ -68,6 +70,10 @@ def rerank_candidates(
         scores = -torch.arange(len(candidate_ids), dtype=torch.float, device=device)
     elif mode == "source":
         scores = source_prior_for_items(candidate_ids, sources=sources, graph_scores=graph_scores).to(device)
+    elif mode == "learned_source":
+        if source_ranker is None or source_features is None:
+            raise ValueError("learned_source mode requires source_ranker and source_features.")
+        scores = source_ranker.score(source_features.to(device))
     elif mode == "adaptive":
         scores = adaptive["scores"][0]
     else:

@@ -31,13 +31,13 @@ def encode_images(
     timeout: int,
     device: str = "cuda",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    from transformers import CLIPImageProcessor, CLIPVisionModel
+    from transformers import CLIPImageProcessor, CLIPModel
 
     actual_device = device if torch.cuda.is_available() else "cpu"
-    model = CLIPVisionModel.from_pretrained(model_name).to(actual_device)
+    model = CLIPModel.from_pretrained(model_name).to(actual_device)
     processor = CLIPImageProcessor.from_pretrained(model_name)
     model.eval()
-    hidden = model.config.hidden_size
+    hidden = model.config.projection_dim
     embeddings = torch.zeros((len(image_urls), hidden), dtype=torch.float)
     mask = torch.zeros(len(image_urls), dtype=torch.float)
     encoded = 0
@@ -51,7 +51,7 @@ def encode_images(
             if image is None:
                 continue
             inputs = processor(images=image, return_tensors="pt").to(actual_device)
-            output = model(**inputs).pooler_output.squeeze(0).cpu().float()
+            output = model.get_image_features(**inputs).squeeze(0).cpu().float()
             embeddings[idx] = output
             mask[idx] = 1.0
             encoded += 1

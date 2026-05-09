@@ -43,8 +43,8 @@ class WeightBucket:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze CS-TAMoERec expert weights.")
-    parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
-    parser.add_argument("--checkpoint", default="checkpoints/cstamoerec/best_cstamoerec.pt")
+    parser.add_argument("--config", default="config/cstamoerec_all_beauty_dense10k.yaml")
+    parser.add_argument("--checkpoint", default="checkpoints/cstamoerec_dense10k/best_cstamoerec.pt")
     parser.add_argument("--device", default=None)
     parser.add_argument("--split", default="test", choices=["train", "valid", "test"])
     parser.add_argument("--max-batches", type=int, default=0)

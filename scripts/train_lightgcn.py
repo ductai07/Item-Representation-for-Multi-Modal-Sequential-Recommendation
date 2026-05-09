@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from cstamoerec.config import load_config
 from cstamoerec.data import load_artifacts, set_seed
@@ -20,7 +25,7 @@ from cstamoerec.graph import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train modal-aware LightGCN item embeddings from ID/Text/Image graphs.")
-    parser.add_argument("--config", default="config/cstamoerec_all_beauty.yaml")
+    parser.add_argument("--config", default="config/cstamoerec_all_beauty_dense10k.yaml")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--lr", type=float, default=0.001)

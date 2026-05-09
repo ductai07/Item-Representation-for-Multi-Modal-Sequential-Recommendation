@@ -115,11 +115,18 @@ def load_json(path: str | Path) -> Any:
         return json.load(f)
 
 
-def build_examples(sequences: dict[int, list[tuple[int, int]]], max_seq_len: int) -> dict[str, list[dict[str, Any]]]:
+def build_examples(
+    sequences: dict[int, list[tuple[int, int]]],
+    max_seq_len: int,
+    min_events: int = 5,
+) -> dict[str, list[dict[str, Any]]]:
+    # The leave-two-out split below needs at least one train target plus
+    # one validation and one test target.
+    min_events = max(int(min_events), 4)
     splits = {"train": [], "valid": [], "test": []}
     for user_id, events in sequences.items():
         events = sorted(events, key=lambda x: x[1])
-        if len(events) < 5:
+        if len(events) < min_events:
             continue
         item_ids = [x[0] for x in events]
         times = [x[1] for x in events]
