@@ -54,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="config/cstamoerec_all_beauty_dense10k.yaml")
     parser.add_argument("--device", default=None)
     parser.add_argument("--skip-images", action="store_true")
+    parser.add_argument("--force", action="store_true", help="Rebuild even if output artifacts already exist.")
     parser.add_argument("--text-batch-size", type=int, default=128)
     parser.add_argument("--limit-reviews", type=int, default=0, help="Debug only: keep the first N reviews.")
     return parser.parse_args()
@@ -64,6 +65,10 @@ def main() -> None:
     cfg = load_config(args.config)
     set_seed(cfg.data.seed)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    output_dir = Path(cfg.data.output_dir)
+    if not args.force and (output_dir / "examples.pt").exists() and (output_dir / "features.pt").exists() and (output_dir / "meta.json").exists():
+        print(f"Artifacts already exist in {output_dir}. Use --force to rebuild.")
+        return
 
     print(f"Loading reviews: {cfg.data.review_config}")
     reviews = load_amazon2023_config(cfg.data.dataset_name, cfg.data.review_config)
@@ -238,8 +243,24 @@ def main() -> None:
             "text": text[:1000],
         }
 
-    print("Encoding text features")
-    text_embeddings = encode_texts(item_texts, cfg.data.text_model, args.text_batch_size, device=device)
+    cache_dir = output_dir / "_prepare_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    text_cache = cache_dir / "text_embeddings.pt"
+    image_cache = cache_dir / "image_embeddings.pt"
+
+    if not args.force and text_cache.exists():
+        cached_text = torch.load(text_cache, map_location="cpu", weights_only=False)
+        if isinstance(cached_text, torch.Tensor) and cached_text.shape[0] == len(item_texts):
+            print(f"Loading cached text features from {text_cache}")
+            text_embeddings = cached_text.float()
+        else:
+            print(f"Ignoring incompatible text cache: {text_cache}")
+            text_embeddings = encode_texts(item_texts, cfg.data.text_model, args.text_batch_size, device=device)
+            torch.save(text_embeddings.cpu(), text_cache)
+    else:
+        print("Encoding text features")
+        text_embeddings = encode_texts(item_texts, cfg.data.text_model, args.text_batch_size, device=device)
+        torch.save(text_embeddings.cpu(), text_cache)
     text_embeddings[0].zero_()
     text_embeddings = normalize_feature_matrix(text_embeddings)
 
@@ -251,6 +272,7 @@ def main() -> None:
             cfg.data.max_image_items,
             cfg.data.image_timeout,
             device=device,
+            cache_path=image_cache,
         )
         image_embeddings = normalize_feature_matrix(image_embeddings)
     else:
@@ -282,7 +304,6 @@ def main() -> None:
         "item_titles": item_titles,
     }
 
-    output_dir = Path(cfg.data.output_dir)
     write_artifacts(output_dir, examples, features, meta)
     save_json(output_dir / "item_cards.json", item_raw)
     print(f"Saved artifacts to {output_dir}")

@@ -30,6 +30,8 @@ def encode_images(
     max_image_items: int,
     timeout: int,
     device: str = "cuda",
+    cache_path: str | Path | None = None,
+    cache_every: int = 250,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     from transformers import CLIPImageProcessor, CLIPModel
 
@@ -40,10 +42,28 @@ def encode_images(
     hidden = model.config.projection_dim
     embeddings = torch.zeros((len(image_urls), hidden), dtype=torch.float)
     mask = torch.zeros(len(image_urls), dtype=torch.float)
-    encoded = 0
+    cache_file = Path(cache_path) if cache_path else None
+    if cache_file and cache_file.exists():
+        cached = torch.load(cache_file, map_location="cpu", weights_only=False)
+        cached_embeddings = cached.get("image_embeddings")
+        cached_mask = cached.get("image_mask")
+        if (
+            isinstance(cached_embeddings, torch.Tensor)
+            and isinstance(cached_mask, torch.Tensor)
+            and tuple(cached_embeddings.shape) == tuple(embeddings.shape)
+            and tuple(cached_mask.shape) == tuple(mask.shape)
+        ):
+            embeddings = cached_embeddings.float()
+            mask = cached_mask.float()
+            print(f"Resuming image embeddings from {cache_file} ({int(mask.sum().item())} cached items).")
+        else:
+            print(f"Ignoring incompatible image cache: {cache_file}")
+    encoded = int(mask.sum().item())
     with torch.no_grad():
         for idx, url in tqdm(list(enumerate(image_urls)), desc="Image embedding"):
             if idx == 0 or not url:
+                continue
+            if mask[idx].item() > 0:
                 continue
             if encoded >= max_image_items:
                 break
@@ -55,7 +75,16 @@ def encode_images(
             embeddings[idx] = output
             mask[idx] = 1.0
             encoded += 1
+            if cache_file and encoded % cache_every == 0:
+                _save_image_cache(cache_file, embeddings, mask)
+    if cache_file:
+        _save_image_cache(cache_file, embeddings, mask)
     return embeddings, mask
+
+
+def _save_image_cache(path: Path, embeddings: torch.Tensor, mask: torch.Tensor) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"image_embeddings": embeddings.cpu(), "image_mask": mask.cpu()}, path)
 
 
 def _clip_image_features(model, inputs) -> torch.Tensor:
