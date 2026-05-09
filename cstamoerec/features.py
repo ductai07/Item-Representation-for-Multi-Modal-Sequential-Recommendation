@@ -95,15 +95,26 @@ def _clip_image_features(model, inputs) -> torch.Tensor:
     if hasattr(output, "image_embeds") and output.image_embeds is not None:
         return output.image_embeds
     if hasattr(output, "pooler_output") and output.pooler_output is not None:
-        return model.visual_projection(output.pooler_output)
+        return _project_clip_image_features(model, output.pooler_output)
     if isinstance(output, (tuple, list)):
         for value in output:
             if isinstance(value, torch.Tensor) and value.ndim == 2:
-                if value.shape[-1] == model.config.projection_dim:
-                    return value
-                return model.visual_projection(value)
+                return _project_clip_image_features(model, value)
     vision_output = model.vision_model(**inputs)
-    return model.visual_projection(vision_output.pooler_output)
+    return _project_clip_image_features(model, vision_output.pooler_output)
+
+
+def _project_clip_image_features(model, features: torch.Tensor) -> torch.Tensor:
+    projection_dim = int(model.config.projection_dim)
+    if features.shape[-1] == projection_dim:
+        return features
+    projection_in = int(model.visual_projection.in_features)
+    if features.shape[-1] == projection_in:
+        return model.visual_projection(features)
+    raise ValueError(
+        f"Unexpected CLIP image feature shape: got {tuple(features.shape)}, "
+        f"expected last dim {projection_dim} or {projection_in}."
+    )
 
 
 def _download_image(url: str, timeout: int) -> Image.Image | None:
