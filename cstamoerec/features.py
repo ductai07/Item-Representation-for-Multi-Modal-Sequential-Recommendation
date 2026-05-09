@@ -51,11 +51,30 @@ def encode_images(
             if image is None:
                 continue
             inputs = processor(images=image, return_tensors="pt").to(actual_device)
-            output = model.get_image_features(**inputs).squeeze(0).cpu().float()
+            output = _clip_image_features(model, inputs).squeeze(0).cpu().float()
             embeddings[idx] = output
             mask[idx] = 1.0
             encoded += 1
     return embeddings, mask
+
+
+def _clip_image_features(model, inputs) -> torch.Tensor:
+    """Return projected CLIP image features across transformers versions."""
+    output = model.get_image_features(**inputs)
+    if isinstance(output, torch.Tensor):
+        return output
+    if hasattr(output, "image_embeds") and output.image_embeds is not None:
+        return output.image_embeds
+    if hasattr(output, "pooler_output") and output.pooler_output is not None:
+        return model.visual_projection(output.pooler_output)
+    if isinstance(output, (tuple, list)):
+        for value in output:
+            if isinstance(value, torch.Tensor) and value.ndim == 2:
+                if value.shape[-1] == model.config.projection_dim:
+                    return value
+                return model.visual_projection(value)
+    vision_output = model.vision_model(**inputs)
+    return model.visual_projection(vision_output.pooler_output)
 
 
 def _download_image(url: str, timeout: int) -> Image.Image | None:
