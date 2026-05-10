@@ -13,6 +13,11 @@ MAX_CANDIDATES="${MAX_CANDIDATES:-1000}"
 RERANKER_EPOCHS="${RERANKER_EPOCHS:-8}"
 SOURCE_RANKER_EPOCHS="${SOURCE_RANKER_EPOCHS:-250}"
 DEMO_USERS="${DEMO_USERS:-50}"
+LIMIT_USERS="${LIMIT_USERS:-0}"
+LIMIT_ARGS=()
+if [ "$LIMIT_USERS" -gt 0 ]; then
+  LIMIT_ARGS=(--limit-users "$LIMIT_USERS")
+fi
 
 export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 
@@ -76,6 +81,7 @@ python scripts/evaluate_traditional_baselines.py \
   --config "$CONFIG" \
   --checkpoint "$CHECKPOINT" \
   --num-negatives 99 \
+  "${LIMIT_ARGS[@]}" \
   --device "$DEVICE"
 
 echo "== Evaluate full-pool candidate generation =="
@@ -87,6 +93,7 @@ python scripts/evaluate_candidates.py \
   --topk 50 100 200 500 1000 \
   --checkpoint "$CHECKPOINT" \
   --include-model-candidates \
+  "${LIMIT_ARGS[@]}" \
   --device "$DEVICE"
 
 echo "== Evaluate true two-stage retrieval + reranking =="
@@ -98,6 +105,7 @@ python scripts/rerank_candidates.py \
   --per-source-k "$PER_SOURCE_K" \
   --max-candidates "$MAX_CANDIDATES" \
   --include-model-candidates \
+  "${LIMIT_ARGS[@]}" \
   --device "$DEVICE"
 
 python scripts/rerank_candidates.py \
@@ -109,6 +117,7 @@ python scripts/rerank_candidates.py \
   --per-source-k "$PER_SOURCE_K" \
   --max-candidates "$MAX_CANDIDATES" \
   --include-model-candidates \
+  "${LIMIT_ARGS[@]}" \
   --device "$DEVICE"
 
 python scripts/rerank_candidates.py \
@@ -119,6 +128,7 @@ python scripts/rerank_candidates.py \
   --per-source-k "$PER_SOURCE_K" \
   --max-candidates "$MAX_CANDIDATES" \
   --include-model-candidates \
+  "${LIMIT_ARGS[@]}" \
   --device "$DEVICE"
 
 echo "== Explainability and report artifacts =="
