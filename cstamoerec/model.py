@@ -180,6 +180,10 @@ class CSTAMoERec(nn.Module):
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
         self.output_norm = nn.LayerNorm(hidden_size)
         self.category_head = nn.Linear(hidden_size, num_categories)
+        item_bias = torch.log1p(item_popularity.float())
+        item_bias = item_bias - item_bias[1:].mean().clamp_min(0.0)
+        item_bias[0] = 0.0
+        self.item_bias = nn.Parameter(item_bias * 0.01)
 
         self.register_buffer("text_features", text_embeddings.float())
         self.register_buffer("image_features", image_embeddings.float())
@@ -299,7 +303,7 @@ class CSTAMoERec(nn.Module):
             batch["cold_flags"],
         )
         item_repr = self.represent_all_items_static()
-        scores = torch.matmul(context, item_repr.t())
+        scores = torch.matmul(context, item_repr.t()) + self.item_bias.unsqueeze(0)
         scores[:, 0] = -1e9
         target_repr = item_repr[batch["target"]]
         category_logits = self.category_head(target_repr)
@@ -326,7 +330,7 @@ class CSTAMoERec(nn.Module):
             batch["cold_flags"],
         )
         candidate_repr, weights = self.represent_candidates_adaptive(context, candidate_ids, graph_scores)
-        scores = torch.einsum("bh,bnh->bn", context, candidate_repr)
+        scores = torch.einsum("bh,bnh->bn", context, candidate_repr) + self.item_bias[candidate_ids]
         return {"scores": scores, "expert_weights": weights}
 
     def represent_candidates_adaptive(

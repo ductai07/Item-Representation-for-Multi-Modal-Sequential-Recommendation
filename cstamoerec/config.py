@@ -64,6 +64,8 @@ class TrainConfig:
     category_loss_weight: float = 0.05
     alignment_loss_weight: float = 0.05
     router_balance_loss_weight: float = 0.01
+    hard_negative_loss_weight: float = 0.2
+    num_hard_negatives: int = 64
     alignment_temperature: float = 0.2
     num_eval_negatives: int = 999
     device: str = "cuda"

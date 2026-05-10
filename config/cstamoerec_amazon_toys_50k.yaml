@@ -50,6 +50,8 @@ train:
   category_loss_weight: 0.0
   alignment_loss_weight: 0.03
   router_balance_loss_weight: 0.01
+  hard_negative_loss_weight: 0.2
+  num_hard_negatives: 64
   alignment_temperature: 0.2
   num_eval_negatives: 0
   device: cuda

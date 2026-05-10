@@ -153,11 +153,18 @@ def train_one_epoch(model, loader, optimizer, cfg, device: str) -> float:
         batch = move_batch(batch, device)
         output = model(batch)
         next_loss = F.cross_entropy(output["scores"], batch["target"])
+        hard_loss = hard_negative_bpr_loss(
+            output["scores"],
+            batch["target"],
+            batch["seq"],
+            cfg.train.num_hard_negatives,
+        )
         cat_loss = F.cross_entropy(output["category_logits"], batch["target_category"])
         align = alignment_loss(output["id_context"], output["mm_context"], cfg.train.alignment_temperature)
         balance = router_balance_loss(output["expert_weights"], batch["seq"])
         loss = (
             next_loss
+            + cfg.train.hard_negative_loss_weight * hard_loss
             + cfg.train.category_loss_weight * cat_loss
             + cfg.train.alignment_loss_weight * align
             + cfg.train.router_balance_loss_weight * balance
@@ -169,6 +176,20 @@ def train_one_epoch(model, loader, optimizer, cfg, device: str) -> float:
         total_loss += loss.item() * batch["seq"].size(0)
         total_count += batch["seq"].size(0)
     return total_loss / max(total_count, 1)
+
+
+def hard_negative_bpr_loss(scores: torch.Tensor, targets: torch.Tensor, seq: torch.Tensor, num_negatives: int) -> torch.Tensor:
+    if num_negatives <= 0:
+        return scores.new_zeros(())
+    masked = scores.detach().clone()
+    masked.scatter_(1, seq.clamp_min(0), -1e9)
+    masked.scatter_(1, targets.view(-1, 1), -1e9)
+    masked[:, 0] = -1e9
+    k = min(int(num_negatives), max(masked.size(1) - 2, 1))
+    negative_ids = torch.topk(masked, k=k, dim=1).indices
+    positive_scores = scores.gather(1, targets.view(-1, 1))
+    negative_scores = scores.gather(1, negative_ids)
+    return -F.logsigmoid(positive_scores - negative_scores).mean()
 
 
 @torch.no_grad()
