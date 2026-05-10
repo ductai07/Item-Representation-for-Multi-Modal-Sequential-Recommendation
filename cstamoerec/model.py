@@ -262,12 +262,14 @@ class CSTAMoERec(nn.Module):
         )
         encoded = self.encoder(fused, mask=causal_mask, src_key_padding_mask=padding_mask)
         encoded = self.output_norm(encoded)
-        lengths = item_ids.ne(0).sum(dim=1).clamp_min(1)
-        context = encoded[torch.arange(encoded.size(0), device=encoded.device), lengths - 1]
+        non_pad = item_ids.ne(0)
+        positions_idx = torch.arange(item_ids.size(1), device=item_ids.device).unsqueeze(0).expand_as(item_ids)
+        last_indices = positions_idx.masked_fill(~non_pad, 0).max(dim=1).values
+        context = encoded[torch.arange(encoded.size(0), device=encoded.device), last_indices]
         id_context = self.item_embedding(item_ids)
-        id_context = id_context[torch.arange(encoded.size(0), device=encoded.device), lengths - 1]
+        id_context = id_context[torch.arange(encoded.size(0), device=encoded.device), last_indices]
         mm_context = (text_emb + image_emb) * 0.5
-        mm_context = mm_context[torch.arange(encoded.size(0), device=encoded.device), lengths - 1]
+        mm_context = mm_context[torch.arange(encoded.size(0), device=encoded.device), last_indices]
         return context, weights, id_context, mm_context
 
     def represent_all_items_static(self) -> torch.Tensor:
