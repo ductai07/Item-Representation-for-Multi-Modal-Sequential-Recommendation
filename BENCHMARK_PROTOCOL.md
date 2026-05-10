@@ -86,6 +86,8 @@ python scripts/rerank_candidates.py \
 
 Report `CandidatePoolHitRate`, `Recall@200`, `Recall@500`, `Recall@1000`, `HR@10`, `NDCG@10`, and `Coverage@10`. This table is stricter and should be presented as real retrieval + reranking, not as the direct paper comparison table.
 
+The benchmark configs use `train.num_eval_negatives: 0`, so validation/test inside `train_cstamoerec.py` is full-catalog evaluation. Use `evaluate_traditional_baselines.py --num-negatives 99` only when creating the sampled-negative comparison table.
+
 ## Baselines
 
 Run these local baselines first because they share exactly the same processed data and split:

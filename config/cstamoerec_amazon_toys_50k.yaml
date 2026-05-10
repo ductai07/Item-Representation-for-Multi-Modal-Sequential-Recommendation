@@ -51,7 +51,7 @@ train:
   alignment_loss_weight: 0.03
   router_balance_loss_weight: 0.01
   alignment_temperature: 0.2
-  num_eval_negatives: 99
+  num_eval_negatives: 0
   device: cuda
   save_dir: checkpoints/cstamoerec_toys_5core_50k
   seed: 2025
