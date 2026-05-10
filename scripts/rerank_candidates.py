@@ -66,10 +66,13 @@ def main() -> None:
         features["item_categories"],
         meta["cold_threshold"],
     )
-    model = build_model(cfg, artifacts, device)
-    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model"])
-    model.eval()
+    needs_model = args.mode in {"adaptive", "hybrid", "static"} or args.include_model_candidates
+    model = None
+    if needs_model:
+        model = build_model(cfg, artifacts, device)
+        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model"])
+        model.eval()
     source_ranker = load_ranker(args.source_ranker) if args.source_ranker else None
     generator = CandidateGenerator(artifacts, per_source_k=args.per_source_k, max_candidates=args.max_candidates)
     avg = MetricAverager()
@@ -79,7 +82,9 @@ def main() -> None:
     for idx in tqdm(range(total), desc="two-stage-eval"):
         raw_ex = artifacts["examples"][args.split][idx]
         seq = [int(x) for x in raw_ex["seq"] if int(x) > 0]
-        batch = {key: value.unsqueeze(0).to(device) for key, value in dataset[idx].items()}
+        batch = None
+        if needs_model:
+            batch = {key: value.unsqueeze(0).to(device) for key, value in dataset[idx].items()}
         candidates = generator.generate(
             seq,
             model=model,
@@ -123,8 +128,12 @@ def main() -> None:
                 )
                 scores = source_ranker.score(source_features.to(device)).detach().cpu().view(1, -1)
             elif args.mode == "adaptive":
+                if model is None or batch is None:
+                    raise ValueError("adaptive mode requires a checkpoint-backed model.")
                 scores = model.score_candidates(batch, candidate_tensor, graph_scores=graph_tensor)["scores"].detach().cpu()
             else:
+                if model is None or batch is None:
+                    raise ValueError(f"{args.mode} mode requires a checkpoint-backed model.")
                 full_scores = mask_seen_items(model(batch)["scores"], batch["seq"])
                 scores = full_scores[:, candidate_tensor].detach().cpu()
                 if args.mode == "hybrid":
