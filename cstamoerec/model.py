@@ -7,6 +7,12 @@ from torch.nn import functional as F
 from cstamoerec.data import log_time_interval_days, unix_month_weekday
 
 
+def last_non_pad_indices(item_ids: torch.Tensor) -> torch.Tensor:
+    non_pad = item_ids.ne(0)
+    positions = torch.arange(item_ids.size(1), device=item_ids.device).unsqueeze(0).expand_as(item_ids)
+    return positions.masked_fill(~non_pad, 0).max(dim=1).values
+
+
 class TimeEncoder(nn.Module):
     def __init__(self, hidden_size: int, time_dim: int) -> None:
         super().__init__()
@@ -262,9 +268,7 @@ class CSTAMoERec(nn.Module):
         )
         encoded = self.encoder(fused, mask=causal_mask, src_key_padding_mask=padding_mask)
         encoded = self.output_norm(encoded)
-        non_pad = item_ids.ne(0)
-        positions_idx = torch.arange(item_ids.size(1), device=item_ids.device).unsqueeze(0).expand_as(item_ids)
-        last_indices = positions_idx.masked_fill(~non_pad, 0).max(dim=1).values
+        last_indices = last_non_pad_indices(item_ids)
         context = encoded[torch.arange(encoded.size(0), device=encoded.device), last_indices]
         id_context = self.item_embedding(item_ids)
         id_context = id_context[torch.arange(encoded.size(0), device=encoded.device), last_indices]

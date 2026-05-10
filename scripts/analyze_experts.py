@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from cstamoerec.config import load_config
 from cstamoerec.data import SequenceDataset, load_artifacts
+from cstamoerec.model import last_non_pad_indices
 from cstamoerec.train import build_model, move_batch
 
 
@@ -90,8 +91,7 @@ def main() -> None:
             if warm_mask.any():
                 buckets["warm_items"].update(target_weights[warm_mask])
 
-            lengths = batch["length"].clamp_min(1)
-            last_pos = lengths - 1
+            last_pos = last_non_pad_indices(batch["seq"])
             last_time = batch["times"][torch.arange(batch["times"].size(0), device=device), last_pos]
             gap_days = (batch["target_time"] - last_time).float().clamp_min(0) / 86400000.0
             long_gap_mask = gap_days >= 30
