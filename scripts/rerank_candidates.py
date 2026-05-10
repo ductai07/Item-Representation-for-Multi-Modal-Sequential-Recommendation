@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=["candidate", "source", "learned_source", "static", "adaptive", "hybrid"], default="hybrid")
     parser.add_argument("--prior-weight", type=float, default=1.0)
     parser.add_argument("--model-weight", type=float, default=0.05)
+    parser.add_argument("--rank-weight", type=float, default=1.0, help="Weight for the original combined candidate order in hybrid mode.")
     parser.add_argument("--source-ranker", default=None)
     parser.add_argument("--include-model-candidates", action="store_true", help="Add top candidates from the trained CS-TAMoERec model to Stage 1.")
     parser.add_argument(
@@ -128,9 +129,12 @@ def main() -> None:
                 scores = full_scores[:, candidate_tensor].detach().cpu()
                 if args.mode == "hybrid":
                     prior = source_prior_for_items(candidates.item_ids, candidates.sources, graph_scores).view(1, -1)
+                    rank_prior = -torch.arange(len(candidates.item_ids), dtype=torch.float).view(1, -1)
+                    if rank_prior.numel() > 1 and float(rank_prior.std()) > 1e-8:
+                        rank_prior = (rank_prior - rank_prior.mean()) / rank_prior.std()
                     if scores.numel() > 1 and float(scores.std()) > 1e-8:
                         scores = (scores - scores.mean()) / scores.std()
-                    scores = args.model_weight * scores + args.prior_weight * prior
+                    scores = args.model_weight * scores + args.prior_weight * prior + args.rank_weight * rank_prior
         target_pos = torch.tensor([candidates.item_ids.index(target)])
         avg.update(topk_metrics(scores, target_pos, cfg.train.eval_topk), 1)
     summary = avg.compute()

@@ -11,14 +11,14 @@ def source_prior_for_items(
     graph_scores: list[list[float]] | list[float] | None = None,
 ) -> torch.Tensor:
     source_weights = {
-        "image": 1.00,
-        "image_graph": 0.95,
-        "itemcf": 0.90,
-        "text_graph": 0.80,
-        "text": 0.75,
-        "transition": 0.70,
-        "popularity": 0.35,
-        "sasrec": 0.50,
+        "transition": 1.20,
+        "itemcf": 1.15,
+        "text": 0.80,
+        "text_graph": 0.75,
+        "popularity": 0.65,
+        "image": 0.55,
+        "image_graph": 0.50,
+        "sasrec": 0.40,
     }
     values = []
     for idx, item in enumerate(candidate_ids):
