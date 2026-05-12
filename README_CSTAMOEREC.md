@@ -8,6 +8,8 @@ Graph-enhanced multimodal candidate retrieval
 
 MoE/CS-TAMoERec không còn là claim chính. MoE chỉ là module thử nghiệm/ablation nếu chưa vượt được candidate-order.
 
+Đã thêm `sequence_graph` lấy cảm hứng từ MuSICRec: mỗi train sequence được xem như một sequence node, tìm sequence gần với history hiện tại rồi lấy item/target từ sequence đó làm candidate.
+
 ## Cài Đặt
 
 ```bash
@@ -63,6 +65,13 @@ python scripts/rerank_candidates.py \
   --device cuda
 ```
 
+Chạy gọn graph-only pipeline:
+
+```bash
+chmod +x scripts/run_graph_retrieval_benchmark.sh
+bash scripts/run_graph_retrieval_benchmark.sh $CONFIG
+```
+
 Debug nhanh:
 
 ```bash
@@ -89,6 +98,13 @@ PoolHit@1000 = 0.3966
 config/cstamoerec_amazon_baby_50k.yaml
 config/cstamoerec_amazon_sports_50k.yaml
 config/cstamoerec_amazon_electronics_50k.yaml
+```
+
+Ví dụ chạy Baby:
+
+```bash
+CONFIG=config/cstamoerec_amazon_baby_50k.yaml
+bash scripts/run_graph_retrieval_benchmark.sh $CONFIG
 ```
 
 Metric cần báo cáo:

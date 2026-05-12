@@ -15,6 +15,13 @@ class CandidateResult:
     source_scores: dict[int, dict[str, float]]
 
 
+@dataclass
+class SequenceNodeIndex:
+    sequences: list[list[int]]
+    targets: list[int]
+    item_to_sequences: dict[int, list[int]]
+
+
 def build_transition_graph(examples: list[dict[str, Any]], num_items: int, max_neighbors: int = 200) -> dict[int, list[tuple[int, float]]]:
     transitions: dict[int, Counter[int]] = defaultdict(Counter)
     for ex in examples:
@@ -27,6 +34,24 @@ def build_transition_graph(examples: list[dict[str, Any]], num_items: int, max_n
         total = sum(counter.values())
         graph[src] = [(dst, count / total) for dst, count in counter.most_common(max_neighbors)]
     return graph
+
+
+def build_sequence_node_index(examples: list[dict[str, Any]], max_seq_len: int = 50) -> SequenceNodeIndex:
+    sequences: list[list[int]] = []
+    targets: list[int] = []
+    item_to_sequences: dict[int, list[int]] = defaultdict(list)
+    for ex in examples:
+        seq = [int(x) for x in ex["seq"] if int(x) > 0][-max_seq_len:]
+        target = int(ex["target"])
+        if target <= 0 or not seq:
+            continue
+        sid = len(sequences)
+        full = list(dict.fromkeys(seq + [target]))
+        sequences.append(full)
+        targets.append(target)
+        for item in full:
+            item_to_sequences[item].append(sid)
+    return SequenceNodeIndex(sequences=sequences, targets=targets, item_to_sequences=dict(item_to_sequences))
 
 
 def build_itemcf_graph(examples: list[dict[str, Any]], num_items: int, max_neighbors: int = 200) -> dict[int, list[tuple[int, float]]]:
@@ -95,6 +120,48 @@ def graph_candidates(
             if dst not in exclude:
                 scores[dst] += score * weight
     return [(item, float(score)) for item, score in scores.most_common(k)]
+
+
+def sequence_graph_candidates(
+    seq: list[int],
+    index: SequenceNodeIndex,
+    k: int,
+    exclude: set[int] | None = None,
+    max_sequence_neighbors: int = 2000,
+) -> list[tuple[int, float]]:
+    exclude = exclude or set()
+    recent = [int(x) for x in seq if int(x) > 0][-10:]
+    if not recent:
+        return []
+    query_items = set(recent)
+    sequence_overlap = Counter()
+    for recency, item in enumerate(reversed(recent), start=1):
+        weight = 1.0 / recency
+        for sid in index.item_to_sequences.get(item, []):
+            sequence_overlap[sid] += weight
+    if not sequence_overlap:
+        return []
+
+    ranked_sequences: list[tuple[int, float]] = []
+    for sid, overlap_score in sequence_overlap.most_common(max_sequence_neighbors):
+        node_items = set(index.sequences[sid])
+        union = len(query_items | node_items)
+        if union <= 0:
+            continue
+        jaccard = len(query_items & node_items) / union
+        score = float(overlap_score) * (0.5 + jaccard)
+        ranked_sequences.append((int(sid), score))
+
+    item_scores = Counter()
+    for sid, seq_score in sorted(ranked_sequences, key=lambda x: x[1], reverse=True)[:max_sequence_neighbors]:
+        target = index.targets[sid]
+        if target > 0 and target not in exclude:
+            item_scores[target] += 2.0 * seq_score
+        node = index.sequences[sid]
+        for rank, item in enumerate(reversed(node[-10:]), start=1):
+            if item > 0 and item not in exclude:
+                item_scores[item] += seq_score / (rank + 1)
+    return [(item, float(score)) for item, score in item_scores.most_common(k)]
 
 
 def graph_score_for_items(seq: list[int], item_ids: list[int], graph: dict[int, list[tuple[int, float]]]) -> list[float]:
@@ -191,6 +258,7 @@ class CandidateGenerator:
         train_examples = artifacts["examples"]["train"]
         self.transition_graph = build_transition_graph(train_examples, self.meta["num_items"])
         self.itemcf_graph = build_itemcf_graph(train_examples, self.meta["num_items"])
+        self.sequence_index = build_sequence_node_index(train_examples, self.meta.get("max_seq_len", 50))
         self.text_graph = build_graph_from_edges(self.features.get("text_graph_edges", []))
         self.image_graph = build_graph_from_edges(self.features.get("image_graph_edges", []))
 
@@ -206,6 +274,7 @@ class CandidateGenerator:
             "popularity": top_popularity(self.features["item_popularity"], self.per_source_k, exclude),
             "transition": graph_candidates(seq, self.transition_graph, self.per_source_k, exclude),
             "itemcf": graph_candidates(seq, self.itemcf_graph, self.per_source_k, exclude),
+            "sequence_graph": sequence_graph_candidates(seq, self.sequence_index, self.per_source_k, exclude),
             "text_graph": graph_candidates(seq, self.text_graph, self.per_source_k, exclude),
             "image_graph": graph_candidates(seq, self.image_graph, self.per_source_k, exclude),
             "text": feature_similarity_candidates(seq, self.features["text_embeddings"], self.per_source_k, exclude),

@@ -69,12 +69,15 @@ Các nguồn candidate:
 Popularity
 Transition graph
 ItemCF graph
+Sequence graph
 Text similarity graph
 Image similarity graph
 Text kNN
 Image kNN
 Combined candidate order
 ```
+
+`Sequence graph` là cải tiến lấy cảm hứng từ MuSICRec. Mỗi train sequence được xem như một sequence node. Khi recommend, hệ thống tìm các sequence node gần với recent history bằng overlap/Jaccard, rồi lấy target/items từ các sequence gần đó làm candidate.
 
 ## Quan Hệ Với MuSICRec Và Các Paper Multimodal SR
 
@@ -148,6 +151,13 @@ config/cstamoerec_amazon_sports_50k.yaml
 config/cstamoerec_amazon_electronics_50k.yaml
 ```
 
+Ví dụ chạy Baby:
+
+```bash
+CONFIG=config/cstamoerec_amazon_baby_50k.yaml
+bash scripts/run_graph_retrieval_benchmark.sh $CONFIG
+```
+
 ## Chạy Pipeline Graph Retrieval
 
 Chọn config:
@@ -200,6 +210,13 @@ python scripts/rerank_candidates.py \
   --per-source-k 500 \
   --max-candidates 1000 \
   --device cuda
+```
+
+Hoặc chạy gọn graph-only pipeline:
+
+```bash
+chmod +x scripts/run_graph_retrieval_benchmark.sh
+bash scripts/run_graph_retrieval_benchmark.sh $CONFIG
 ```
 
 Khi debug, có thể thêm:

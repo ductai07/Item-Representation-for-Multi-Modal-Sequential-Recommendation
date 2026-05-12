@@ -12,6 +12,7 @@ def source_prior_for_items(
 ) -> torch.Tensor:
     source_weights = {
         "transition": 1.20,
+        "sequence_graph": 1.18,
         "itemcf": 1.15,
         "text": 0.80,
         "text_graph": 0.75,
