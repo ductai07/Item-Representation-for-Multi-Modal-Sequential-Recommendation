@@ -28,13 +28,7 @@ Kết luận trung thực: phương pháp hiện tại **chưa vượt MuSICRec 
 
 ## 2. Động Lực Nghiên Cứu
 
-Trong sequential recommendation, lịch sử người dùng thường được biểu diễn dưới dạng chuỗi:
-
-```math
-S_u = [i_1, i_2, \ldots, i_t]
-```
-
-Các mô hình như SASRec, BERT4Rec hoặc FEARec học biểu diễn chuỗi này bằng Transformer hoặc attention. Cách tiếp cận này mạnh khi có đủ dữ liệu, nhưng gặp hạn chế với:
+Trong sequential recommendation, lịch sử người dùng được biểu diễn như một chuỗi các item đã tương tác. Các mô hình như SASRec, BERT4Rec hoặc FEARec học biểu diễn chuỗi này bằng Transformer hoặc attention. Cách tiếp cận này mạnh khi có đủ dữ liệu, nhưng gặp hạn chế với:
 
 - Người dùng có lịch sử ngắn.
 - Dữ liệu tương tác thưa.
@@ -45,123 +39,40 @@ MuSICRec đưa ra insight quan trọng: thay vì chỉ xem sequence là input ph
 
 ## 3. Bài Toán
 
-Với mỗi user `u`, cho lịch sử tương tác:
+Với mỗi user, hệ thống nhận vào lịch sử tương tác trước đó và cần dự đoán item tiếp theo mà user có khả năng tương tác. Kết quả đầu ra là danh sách top-K item được xếp hạng theo mức độ phù hợp.
 
-```math
-S_u = [i_1, i_2, \ldots, i_t]
-```
-
-nhiệm vụ là dự đoán item tiếp theo:
-
-```math
-i_{t+1}
-```
-
-Mô hình cần sinh danh sách top-K:
-
-```math
-\hat{Y}_u^K = [\hat{i}_1, \hat{i}_2, \ldots, \hat{i}_K]
-```
-
-sao cho ground-truth item `i_{t+1}` xuất hiện càng cao trong danh sách càng tốt.
+Mục tiêu đánh giá là ground-truth item xuất hiện càng cao trong danh sách khuyến nghị càng tốt.
 
 ## 4. Phương Pháp
 
 ### 4.1 Sequence-Node Retrieval
 
-Mỗi training example được xem như một sequence node:
+Mỗi training example được xem như một sequence node. Một sequence node gồm hai phần:
 
-```math
-s_j = (H_j, y_j)
-```
+- History của training sequence.
+- Target item tương ứng với sequence đó.
 
-trong đó:
+Với query user hiện tại, hệ thống lấy một đoạn lịch sử gần nhất của user làm query sequence. Sau đó, hệ thống tìm các sequence node trong tập train có lịch sử gần giống với query sequence.
 
-- `H_j` là history của training sequence.
-- `y_j` là target item của training sequence.
+Độ tương tự giữa hai sequence được tính dựa trên mức độ overlap giữa các item gần đây. Ngoài overlap thông thường, hệ thống có thể ưu tiên các item xuất hiện gần thời điểm hiện tại hơn bằng recency-weighted overlap.
 
-Với query user hiện tại:
-
-```math
-q_u = [i_{t-l+1}, \ldots, i_t]
-```
-
-hệ thống tìm các sequence node gần nhất với `q_u`. Độ tương tự được tính dựa trên overlap giữa recent items của query và item trong sequence node.
-
-Một dạng Jaccard similarity cơ bản:
-
-```math
-\operatorname{sim}_{jac}(q_u, s_j)
-=
-\frac{|I(q_u) \cap I(s_j)|}{|I(q_u) \cup I(s_j)|}
-```
-
-Trong đó `I(.)` là tập item xuất hiện trong sequence.
-
-Để ưu tiên item gần thời điểm hiện tại hơn, có thể dùng recency-weighted overlap:
-
-```math
-\operatorname{sim}_{rec}(q_u, s_j)
-=
-\sum_{i \in I(q_u) \cap I(s_j)} \alpha^{t - pos_q(i)}
-```
-
-với:
-
-- `pos_q(i)` là vị trí của item `i` trong query sequence.
-- `0 < \alpha \leq 1` điều khiển mức giảm trọng số theo thời gian.
-
-Candidate từ sequence graph được lấy từ target và các item liên quan trong các sequence node có điểm cao:
-
-```math
-C_{seq}(u) = \bigcup_{s_j \in \operatorname{TopM}(q_u)} \{y_j\} \cup H_j
-```
+Candidate từ sequence graph được lấy từ target item và các item liên quan trong những sequence node có điểm tương tự cao.
 
 Đây là thành phần mạnh nhất trong pipeline hiện tại.
 
 ### 4.2 Transition Graph
 
-Transition graph học quan hệ chuyển tiếp theo thứ tự thời gian. Với mỗi cặp item liên tiếp trong sequence:
+Transition graph học quan hệ chuyển tiếp theo thứ tự thời gian. Nếu một item thường xuất hiện ngay sau một item khác trong lịch sử tương tác, hệ thống tạo hoặc tăng trọng số cạnh chuyển tiếp giữa hai item đó.
 
-```math
-(i_t, i_{t+1})
-```
-
-tạo cạnh có hướng hoặc trọng số:
-
-```math
-w_{i_t, i_{t+1}} = w_{i_t, i_{t+1}} + 1
-```
-
-Candidate transition:
-
-```math
-C_{trans}(u) = \operatorname{TopK}(N^+(i_t))
-```
-
-trong đó `N^+(i_t)` là tập item thường xuất hiện ngay sau item cuối cùng `i_t`.
+Khi inference, hệ thống nhìn vào item cuối cùng trong lịch sử user, sau đó lấy các item thường xuất hiện ngay sau item đó làm candidate.
 
 ### 4.3 ItemCF Graph
 
-ItemCF khai thác đồng xuất hiện item trong cùng history:
+ItemCF khai thác quan hệ đồng xuất hiện giữa các item trong cùng history. Hai item được xem là gần nhau nếu chúng thường xuất hiện trong cùng lịch sử người dùng.
 
-```math
-w_{ij} = \sum_{u} \mathbb{1}(i \in S_u)\mathbb{1}(j \in S_u)
-```
+Để tránh việc item quá phổ biến chi phối kết quả, hệ thống có thể chuẩn hóa điểm đồng xuất hiện bằng tần suất của từng item.
 
-Một phiên bản chuẩn hóa có thể dùng cosine similarity:
-
-```math
-\operatorname{sim}_{cf}(i,j)
-=
-\frac{w_{ij}}{\sqrt{freq(i)freq(j)}}
-```
-
-Candidate ItemCF lấy các item gần với những item gần đây của user:
-
-```math
-C_{cf}(u) = \bigcup_{i \in q_u} \operatorname{TopK}(\operatorname{sim}_{cf}(i, \cdot))
-```
+Candidate ItemCF được lấy từ các item gần với những item gần đây trong lịch sử user.
 
 ### 4.4 Text/Image Similarity Graph
 
@@ -170,44 +81,13 @@ Dự án dùng feature có sẵn từ MuSICRec:
 - `text_feat.npy`: 384 chiều.
 - `image_feat.npy`: 4096 chiều.
 
-Với mỗi modality `m`, tính cosine similarity:
-
-```math
-\operatorname{sim}_{m}(i,j)
-=
-\frac{\mathbf{x}_i^{m} \cdot \mathbf{x}_j^{m}}
-{\|\mathbf{x}_i^{m}\|_2 \|\mathbf{x}_j^{m}\|_2}
-```
-
-Sau đó xây dựng top-k similarity graph:
-
-```math
-E_m = \{(i,j) \mid j \in \operatorname{TopK}(\operatorname{sim}_{m}(i,\cdot))\}
-```
+Với mỗi modality, hệ thống tính mức độ tương tự giữa các item dựa trên feature vector. Sau đó, hệ thống xây dựng top-k similarity graph cho từng modality.
 
 Thực nghiệm hiện tại cho thấy image signal trên Baby yếu, nên image chỉ được dùng như auxiliary signal với trọng số thấp.
 
 ### 4.5 LightGCN Cho Graph Embedding
 
-Với graph item-item, LightGCN lan truyền embedding qua các tầng:
-
-```math
-\mathbf{e}_i^{(l+1)}
-=
-\sum_{j \in \mathcal{N}(i)}
-\frac{1}{\sqrt{|\mathcal{N}(i)||\mathcal{N}(j)|}}
-\mathbf{e}_j^{(l)}
-```
-
-Embedding cuối cùng là trung bình các layer:
-
-```math
-\mathbf{e}_i
-=
-\frac{1}{L+1}
-\sum_{l=0}^{L}
-\mathbf{e}_i^{(l)}
-```
+Với graph item-item, LightGCN lan truyền embedding giữa các item hàng xóm qua nhiều tầng. Embedding cuối cùng được tổng hợp từ embedding ở các tầng khác nhau.
 
 Trong dự án, LightGCN được dùng để làm giàu graph embedding cho text/image/id graph, không phải claim chính thay cho MuSICRec.
 
@@ -223,21 +103,11 @@ Các nguồn candidate gồm:
 - `text_graph`
 - `image_graph`
 - `popularity`
+- `sasrec`
 
-Hệ thống hợp nhất candidate bằng **Weighted Reciprocal Rank Fusion**:
+Hệ thống hợp nhất candidate bằng **Weighted Reciprocal Rank Fusion**. Ý tưởng là mỗi nguồn candidate đóng góp điểm cho item dựa trên thứ hạng của item trong nguồn đó và trọng số của nguồn.
 
-```math
-\operatorname{score}(i \mid u)
-=
-\sum_{m \in \mathcal{M}}
-\frac{w_m}{\operatorname{rank}_m(i)}
-```
-
-Trong đó:
-
-- `m` là một nguồn candidate.
-- `w_m` là trọng số của nguồn.
-- `rank_m(i)` là thứ hạng của item `i` trong nguồn `m`.
+Nếu một item xuất hiện ở thứ hạng cao trong nhiều nguồn quan trọng, item đó sẽ có điểm tổng hợp cao hơn.
 
 Trọng số hiện tại:
 
@@ -259,61 +129,19 @@ Các trọng số này được chọn theo validation-driven tuning. Không nê
 
 ### 6.1 Recall@K / HR@K
 
-Vì mỗi user trong validation/test có một ground-truth item, Recall@K tương đương Hit Rate@K:
+Recall@K đo xem ground-truth item có xuất hiện trong top-K recommendation hay không.
 
-```math
-\operatorname{Recall@K}(u)
-=
-\mathbb{1}(y_u \in \hat{Y}_u^K)
-```
-
-Trung bình trên toàn bộ user:
-
-```math
-\operatorname{Recall@K}
-=
-\frac{1}{|\mathcal{U}|}
-\sum_{u \in \mathcal{U}}
-\mathbb{1}(y_u \in \hat{Y}_u^K)
-```
+Vì mỗi user trong validation/test có một ground-truth item, Recall@K tương đương Hit Rate@K.
 
 ### 6.2 NDCG@K
 
-Nếu ground-truth item nằm ở vị trí `r_u`, với `1 <= r_u <= K`:
+NDCG@K đánh giá vị trí xuất hiện của ground-truth item trong danh sách top-K.
 
-```math
-\operatorname{NDCG@K}(u)
-=
-\frac{1}{\log_2(r_u + 1)}
-```
-
-Nếu không xuất hiện trong top-K:
-
-```math
-\operatorname{NDCG@K}(u) = 0
-```
-
-Trung bình:
-
-```math
-\operatorname{NDCG@K}
-=
-\frac{1}{|\mathcal{U}|}
-\sum_{u \in \mathcal{U}}
-\operatorname{NDCG@K}(u)
-```
+Nếu ground-truth item xuất hiện càng cao trong danh sách, NDCG càng cao. Nếu item không xuất hiện trong top-K, điểm NDCG của user đó bằng 0.
 
 ### 6.3 CandidatePoolHitRate
 
-CandidatePoolHitRate đo tỉ lệ ground-truth item xuất hiện trong candidate pool trước khi lấy top-K:
-
-```math
-\operatorname{PoolHit@M}
-=
-\frac{1}{|\mathcal{U}|}
-\sum_{u \in \mathcal{U}}
-\mathbb{1}(y_u \in C_u^M)
-```
+CandidatePoolHitRate đo tỉ lệ ground-truth item xuất hiện trong candidate pool trước khi lấy top-K.
 
 Đây là chỉ số rất quan trọng với two-stage recommendation. Nếu target không nằm trong candidate pool, Stage 2 không thể xếp đúng item đó.
 
@@ -428,15 +256,15 @@ python scripts/rerank_candidates.py \
 
 Kết quả full test hiện tại:
 
-```text
-HR@5 / R@5    = 0.0301
-HR@10 / R@10  = 0.0419
-HR@20 / R@20  = 0.0644
-NDCG@5        = 0.0208
-NDCG@10       = 0.0246
-NDCG@20       = 0.0302
-PoolHit@1000  = 0.4812
-```
+| Metric | Value |
+|---|---:|
+| HR@5 / R@5 | 0.0301 |
+| HR@10 / R@10 | 0.0419 |
+| HR@20 / R@20 | 0.0644 |
+| NDCG@5 | 0.0208 |
+| NDCG@10 | 0.0246 |
+| NDCG@20 | 0.0302 |
+| PoolHit@1000 | 0.4812 |
 
 So với MuSICRec:
 
@@ -458,23 +286,9 @@ MuSICRec mạnh hơn ở Recall vì có:
 - Sequence-item graph.
 - ID-guided multimodal gating.
 
-Loss alignment giữa user view và sequence view trong MuSICRec có dạng:
+Dự án hiện tại chưa có contrastive loss giữa user view và sequence view như MuSICRec. Vì vậy không nên claim rằng phương pháp hiện tại đã thay thế hoàn toàn MuSICRec.
 
-```math
-\mathcal{L}_{US}
-=
--\frac{1}{|\mathcal{U}|}
-\sum_{u \in \mathcal{U}}
-\log
-\frac{
-\exp(\operatorname{sim}(\mathbf{e}^{UI}_u, \mathbf{s}^{SI}_u)/\tau)
-}{
-\sum_{u' \in \mathcal{U}}
-\exp(\operatorname{sim}(\mathbf{e}^{UI}_u, \mathbf{s}^{SI}_{u'})/\tau)
-}
-```
-
-Dự án hiện tại chưa có contrastive loss này. Vì vậy không nên claim rằng phương pháp hiện tại đã thay thế hoàn toàn MuSICRec. Claim hợp lý hơn là:
+Claim hợp lý hơn là:
 
 > Sequence-node retrieval là một hướng nhẹ, dễ debug và có hiệu quả thực nghiệm tốt, đặc biệt ở NDCG, nhưng vẫn cần cải thiện candidate coverage và learned reranking để vượt MuSICRec tổng thể.
 
