@@ -1,4 +1,4 @@
-# Graph-Enhanced Multimodal Sequential Recommendation with Sequence-Node Retrieval**
+# Graph-Enhanced Multimodal Sequential Recommendation with Sequence-Node Retrieval 
 
 ## 1. Tóm tắt (Abstract)
 
