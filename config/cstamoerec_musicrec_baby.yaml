@@ -1,0 +1,47 @@
+data:
+  output_dir: data/processed/musicrec_baby
+  max_seq_len: 50
+  cold_threshold: 5
+  seed: 2025
+
+model:
+  hidden_size: 128
+  n_layers: 2
+  n_heads: 4
+  dropout: 0.2
+  max_seq_len: 50
+  num_experts: 6
+  text_dim: 384
+  image_dim: 4096
+  time_dim: 16
+  router_hidden: 256
+  graph_dim: 64
+  graph_layers: 2
+  use_text: true
+  use_image: true
+  use_time: true
+  use_cold: true
+  use_cross: true
+  use_graph: true
+  use_id_graph: true
+  use_text_graph: true
+  use_image_graph: true
+
+train:
+  data_dir: data/processed/musicrec_baby
+  batch_size: 256
+  epochs: 30
+  lr: 0.001
+  weight_decay: 0.00001
+  num_workers: 0
+  eval_topk: [5, 10, 20]
+  category_loss_weight: 0.0
+  alignment_loss_weight: 0.03
+  router_balance_loss_weight: 0.01
+  hard_negative_loss_weight: 0.2
+  num_hard_negatives: 64
+  alignment_temperature: 0.2
+  num_eval_negatives: 0
+  device: cuda
+  save_dir: checkpoints/cstamoerec_musicrec_baby
+  seed: 2025

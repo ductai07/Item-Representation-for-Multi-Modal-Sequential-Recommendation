@@ -1,329 +1,100 @@
-# Graph-Enhanced Multimodal Sequential Recommendation
-
-Repository này xây dựng hệ gợi ý sản phẩm tiếp theo trong chuỗi hành vi người dùng, sử dụng dữ liệu Amazon Reviews 2023 có tương tác, metadata văn bản và ảnh sản phẩm.
-
-Sau quá trình thử nghiệm, hướng chính của dự án hiện tại là:
-
-```text
-Graph-enhanced multimodal candidate retrieval
-```
-
-Nói ngắn gọn:
-
-```text
-Graph tìm candidate tốt trước, sau đó mới xét reranking nhẹ.
-```
-
-MoE/CS-TAMoERec vẫn còn trong code, nhưng hiện tại **không còn là claim chính** vì kết quả direct full-catalog và adaptive reranking chưa tốt bằng candidate-order từ graph.
-
-## Kết Luận Thực Nghiệm Hiện Tại
-
-Trên Amazon Reviews 2023 Video Games, chạy full test với `max_candidates=1000`, `mode=candidate`, không append target oracle:
-
-```text
-R@5   = 0.0241
-R@10  = 0.0383
-R@20  = 0.0579
-N@5   = 0.0177
-N@10  = 0.0221
-N@20  = 0.0270
-PoolHit@1000 = 0.3966
-```
-
-Ý nghĩa:
-
-- Stage 1 graph retrieval có tín hiệu tốt.
-- Candidate pool lấy được target khoảng 39.66% ở top 1000.
-- Candidate-order ranking đang tốt hơn direct MoE ranker trong thử nghiệm hiện tại.
-- Vì vậy báo cáo nên lấy graph candidate retrieval làm phương pháp chính, còn MoE là ablation/future work.
-
-## Ý Tưởng Chính
-
-Pipeline hiện tại:
-
-```text
-Amazon Reviews 2023
-        |
-        v
-5-core-style filtering + leave-two-out split
-        |
-        v
-Text embedding + Image embedding
-        |
-        v
-Build transition / itemCF / text / image graphs
-        |
-        v
-Stage 1: multimodal graph candidate generation
-        |
-        v
-Stage 2: candidate-order hoặc learned reranking
-        |
-        v
-R@10, R@20, N@10, N@20
-```
-
-Các nguồn candidate:
-
-```text
-Popularity
-Transition graph
-ItemCF graph
-Sequence graph
-Text similarity graph
-Image similarity graph
-Text kNN
-Image kNN
-Combined candidate order
-```
-
-`Sequence graph` là cải tiến lấy cảm hứng từ MuSICRec. Mỗi train sequence được xem như một sequence node. Khi recommend, hệ thống tìm các sequence node gần với recent history bằng overlap/Jaccard, rồi lấy target/items từ các sequence gần đó làm candidate.
-
-## Quan Hệ Với MuSICRec Và Các Paper Multimodal SR
-
-Dự án có thể đối chiếu theo protocol với các hướng như MuSICRec, MISSRec, MMSR, HM4SR, SMORE, MGCN, FREEDOM, BM3, SASRec, BERT4Rec và LightGCN.
-
-Để gần với MuSICRec, nên chạy trên:
-
-```text
-Baby
-Sports and Outdoors
-Electronics
-```
-
-Protocol nên dùng:
-
-```text
-5-core users/items
-leave-two-out split
-R@10, R@20, N@10, N@20
-```
-
-Lưu ý: repo này dùng MiniLM cho text embedding và CLIP cho image embedding. Đây là một phần của phương pháp hiện tại. Nếu paper khác dùng published 384-d text feature và 4096-d visual feature, cần ghi rõ khác biệt này khi báo cáo.
-
-## Cấu Trúc Code
-
-```text
-cstamoerec/
-  candidate.py       # popularity, transition, itemCF, text/image candidate retrieval
-  config.py          # load YAML config
-  data.py            # xử lý sequence, split, artifact
-  features.py        # encode text/image feature
-  graph.py           # LightGCN và graph utilities
-  metrics.py         # HR/Recall, MRR, NDCG, Coverage
-  model.py           # CS-TAMoERec/MoE experimental model
-  reranker.py        # source prior và optional reranking
-  source_ranker.py   # learned source ranker
-  train.py           # train/evaluate MoE experimental model
-
-scripts/
-  prepare_amazon2023.py
-  train_lightgcn.py
-  evaluate_candidates.py
-  rerank_candidates.py
-  evaluate_traditional_baselines.py
-  train_cstamoerec.py
-  train_candidate_reranker.py
-  tune_source_ranker.py
-  summarize_experiments.py
-```
-
-## Cài Đặt
-
-```bash
-pip install -r requirements_cstamoerec.txt
-export PYTHONPATH=$PWD:$PYTHONPATH
-```
-
-## Config Chính
-
-Debug và kiểm tra protocol:
-
-```text
-config/cstamoerec_amazon_video_games_50k.yaml
-```
-
-Các dataset gần với MuSICRec:
-
-```text
-config/cstamoerec_amazon_baby_50k.yaml
-config/cstamoerec_amazon_sports_50k.yaml
-config/cstamoerec_amazon_electronics_50k.yaml
-```
-
-Ví dụ chạy Baby:
-
-```bash
-CONFIG=config/cstamoerec_amazon_baby_50k.yaml
-bash scripts/run_graph_retrieval_benchmark.sh $CONFIG
-```
-
-## Chạy Pipeline Graph Retrieval
-
-Chọn config:
-
-```bash
-export PYTHONPATH=$PWD:$PYTHONPATH
-CONFIG=config/cstamoerec_amazon_video_games_50k.yaml
-```
-
-Chuẩn bị dữ liệu:
-
-```bash
-python scripts/prepare_amazon2023.py \
-  --config $CONFIG \
-  --device cuda \
-  --text-batch-size 256
-```
-
-Train graph / build graph embeddings:
-
-```bash
-python scripts/train_lightgcn.py \
-  --config $CONFIG \
-  --epochs 20 \
-  --batch-size 4096 \
-  --similarity-topk 50 \
-  --similarity-batch-size 384 \
-  --device cuda
-```
-
-Đánh giá candidate recall:
-
-```bash
-python scripts/evaluate_candidates.py \
-  --config $CONFIG \
-  --split test \
-  --per-source-k 500 \
-  --max-candidates 1000 \
-  --topk 10 20 50 100 200 500 1000 \
-  --device cuda
-```
-
-Đánh giá graph candidate-order ranking:
-
-```bash
-python scripts/rerank_candidates.py \
-  --config $CONFIG \
-  --mode candidate \
-  --split test \
-  --per-source-k 500 \
-  --max-candidates 1000 \
-  --device cuda
-```
-
-Hoặc chạy gọn graph-only pipeline:
-
-```bash
-chmod +x scripts/run_graph_retrieval_benchmark.sh
-bash scripts/run_graph_retrieval_benchmark.sh $CONFIG
-```
-
-Khi debug, có thể thêm:
-
-```bash
---limit-users 2000
-```
-
-## MoE / CS-TAMoERec Hiện Tại
-
-MoE hiện vẫn có trong project, nhưng chỉ nên dùng cho:
-
-```text
-ablation
-expert analysis
-future reranking
-demo giải thích
-```
-
-Train MoE:
-
-```bash
-python scripts/train_cstamoerec.py \
-  --config $CONFIG \
-  --device cuda
-```
-
-Đánh giá adaptive MoE reranking:
-
-```bash
-python scripts/rerank_candidates.py \
-  --config $CONFIG \
-  --checkpoint checkpoints/cstamoerec_video_games_5core_50k/best_cstamoerec.pt \
-  --mode adaptive \
-  --split test \
-  --limit-users 2000 \
-  --per-source-k 500 \
-  --max-candidates 1000 \
-  --device cuda
-```
-
-Không dùng MoE làm kết quả chính nếu nó không vượt candidate-order và baseline đơn giản.
-
-## Metric Báo Cáo
-
-Bảng chính nên dùng:
-
-```text
-R@10
-R@20
-N@10
-N@20
-```
-
-Trong code:
-
-```text
-HR@K == Recall@K == R@K
-NDCG@K == N@K
-```
-
-Nên báo cáo thêm:
-
-```text
-CandidatePoolHitRate
-Recall@1000
-AvgCandidatePoolSize
-```
-
-## Baseline Nên Có
-
-Tối thiểu:
-
-```text
-Popularity
-Transition graph
-ItemCF graph
-Text kNN
-Image kNN
-Combined candidate-order
-```
-
-Nếu có thêm thời gian:
-
-```text
-LightGCN standalone
-SASRec / BERT4Rec từ framework ngoài
-learned source ranker
-candidate reranker
-MoE direct/adaptive như ablation
-```
-
-## Lưu Ý Quan Trọng
-
-- `mode=candidate` trong `rerank_candidates.py` là graph candidate-order, không cần checkpoint.
-- `mode=adaptive` và `mode=hybrid` cần checkpoint MoE.
-- 99-negative chỉ nên dùng làm diagnostic hoặc bảng phụ, không trộn với full/two-stage metric.
-- `--limit-users` chỉ để debug. Bảng chính nên chạy full test.
-- Mặc định không append target vào candidate pool. `--append-target-for-oracle` chỉ dùng để chẩn đoán.
-
-## Câu Chuyện Báo Cáo Đề Xuất
-
-Nên trình bày dự án như sau:
-
-```text
-Dự án xây dựng pipeline two-stage cho multimodal sequential recommendation.
-Stage 1 sử dụng transition, itemCF, text, image và modal graph để retrieve candidate từ full catalog.
-Stage 2 đánh giá candidate-order và các hướng reranking nhẹ.
-Kết quả cho thấy graph-enhanced multimodal candidate retrieval là tín hiệu mạnh và ổn định, trong khi MoE hiện được giữ như hướng ablation/future work.
-```
+**Graph-Enhanced Multimodal Sequential Recommendation with Sequence-Node Retrieval**
+
+## 1. Tóm tắt (Abstract)
+
+Dự án tập trung giải quyết bài toán **Multimodal Sequential Recommendation** dưới điều kiện dữ liệu thưa thớt và lịch sử người dùng ngắn. Chúng tôi triển khai một pipeline **two-stage recommendation**:
+
+1. **Stage 1**: Graph-based candidate generation  
+2. **Stage 2**: Candidate reranking bằng weighted source fusion
+
+Ý tưởng cốt lõi là coi lịch sử hành vi người dùng như một **context node** có thể truy hồi các sequence tương tự trong tập huấn luyện, từ đó khai thác các quan hệ Sequence-Sequence, Sequence-Item, Item-Item và Multimodal similarity để sinh candidate.
+
+Trên benchmark Baby sử dụng cùng split và feature với MuSICRec, kết quả full test của dự án như sau:
+
+**Bảng 1: So sánh hiệu suất trên Baby dataset**
+
+| Phương pháp             | R@10   | R@20   | N@10   | N@20   |
+|-------------------------|--------|--------|--------|--------|
+| LightGCN                | 0.0336 | 0.0549 | 0.0178 | 0.0231 |
+| SGL                     | 0.0361 | 0.0586 | 0.0188 | 0.0244 |
+| SASRec                  | 0.0298 | 0.0478 | 0.0150 | 0.0195 |
+| BERT4Rec                | 0.0207 | 0.0355 | 0.0102 | 0.0139 |
+| FEARec                  | 0.0285 | 0.0480 | 0.0146 | 0.0195 |
+| SRGNN                   | 0.0260 | 0.0418 | 0.0132 | 0.0172 |
+| FREEDOM                 | 0.0411 | 0.0655 | 0.0210 | 0.0272 |
+| SMORE                   | 0.0439 | 0.0684 | 0.0229 | 0.0291 |
+| MuSICRec                | **0.0455** | **0.0718** | 0.0235 | 0.0300 |
+| **Dự án hiện tại**      | 0.0419 | 0.0644 | **0.0246** | **0.0302** |
+
+Phương pháp hiện tại **chưa vượt MuSICRec về tổng thể** do Recall@10 và Recall@20 vẫn thấp hơn. Tuy nhiên, dự án đạt NDCG@10 và NDCG@20 cao hơn nhẹ so với MuSICRec, đồng thời **vượt rõ rệt phần lớn các baseline truyền thống** (ID-only và sequential) trên cùng benchmark.
+
+## 2. Động lực nghiên cứu
+
+Các mô hình sequential recommendation truyền thống (SASRec, BERT4Rec, FEARec…) thường biểu diễn lịch sử người dùng dưới dạng chuỗi tuyến tính. Cách tiếp cận này gặp nhiều khó khăn với short-history users, dữ liệu thưa và nhiễu multimodal.
+
+MuSICRec đã đề xuất ý tưởng coi sequence như một node trong graph. Dự án này kế thừa triết lý trên nhưng triển khai theo hướng thực dụng hơn: sử dụng sequence graph chủ yếu để **candidate retrieval** thay vì huấn luyện contrastive GNN end-to-end.
+
+## 3. Tổng quan phương pháp
+
+### 3.1 Sequence Graph Retrieval
+Đây là thành phần chính. Mỗi sequence được xây dựng thành node và được index bởi tập item. Khi inference, recent items được dùng làm query để truy vấn các sequence tương tự dựa trên recency-weighted overlap và Jaccard similarity.
+
+### 3.2 Transition Graph & ItemCF Graph
+- Transition Graph học quan hệ chuyển tiếp theo thứ tự.
+- ItemCF Graph học quan hệ đồng xuất hiện.
+
+Sequence Graph vẫn là nguồn tín hiệu mạnh nhất trong thực nghiệm.
+
+### 3.3 Multimodal Graph
+Sử dụng feature text (384 chiều) và image (4096 chiều) từ MuSICRec để xây dựng similarity graph và embedding bằng LightGCN. Image signal cho kết quả yếu trên Baby dataset và được coi là auxiliary signal.
+
+## 4. Candidate Fusion
+
+Các candidate được hợp nhất bằng **Weighted Reciprocal Rank Fusion**. Trọng số được tối ưu trên validation set, ưu tiên cao cho Sequence Graph (5.0) và giảm mạnh cho image (0.05).
+
+## 5. Thiết lập thực nghiệm
+
+Dự án sử dụng **đúng split và feature** của MuSICRec trên Baby dataset:
+- Train: 102,457 interactions
+- Valid/Test: 19,445 interactions
+- Features: `text_feat.npy` (384), `image_feat.npy` (4096)
+
+## 6. Kết quả thực nghiệm
+
+### 6.1 Kết quả full test
+
+Như Bảng 1, dự án đạt hiệu suất cạnh tranh trên Baby. Cụ thể:
+- **Vượt rõ** LightGCN, SGL và các mô hình sequential truyền thống (SASRec, BERT4Rec, FEARec, SRGNN).
+- NDCG@10 và NDCG@20 **nhỉnh hơn nhẹ** so với MuSICRec.
+- Recall@10 và Recall@20 **thấp hơn** MuSICRec.
+
+### 6.2 Phân tích
+
+NDCG cao hơn cho thấy hệ thống có khả năng xếp một phần target lên vị trí cao khi chúng nằm trong candidate pool. Tuy nhiên, hiệu quả tổng thể vẫn bị giới hạn bởi **CandidatePoolHitRate@1000 chỉ đạt 0.4812** (khoảng 51.9% target bị miss ở Stage 1).
+
+## 7. So sánh với MuSICRec
+
+MuSICRec vẫn mạnh hơn về Recall nhờ end-to-end learning, contrastive alignment ($\mathcal{L}_{US}$) và ID-guided gating. Dự án hiện tại sử dụng retrieval heuristic + weighted fusion nên đơn giản và dễ debug hơn, nhưng chưa đạt được sự học sâu giữa các view.
+
+## 8. Đóng góp hiện tại
+
+- Chứng minh được rằng cách tiếp cận **sequence-node retrieval** có thể mang lại tín hiệu mạnh mà không cần contrastive GNN phức tạp.
+- Xây dựng được pipeline hai giai đoạn nhẹ, interpretable và dễ mở rộng.
+- Áp dụng validation-driven weighting hợp lý cho multimodal signals.
+
+## 9. Hạn chế
+
+1. Candidate pool coverage là nút thắt chính (Hit Rate@1000 = 0.4812).
+2. Weighted fusion vẫn là heuristic tuyến tính.
+3. Chưa áp dụng contrastive learning hay learned reranker.
+
+## 10. Hướng phát triển tiếp theo
+
+- Cải thiện candidate generation (n-gram retrieval, prefix matching…).
+- Huấn luyện learned candidate reranker.
+- Thêm lightweight multimodal gating.
+- Thực nghiệm trên Sports và Electronics dataset.
+
+## 11. Kết luận
+
+Dự án đã chứng minh được giá trị của hướng sequence-node retrieval trên Baby dataset. Phương pháp hiện tại **chưa vượt MuSICRec về mặt tổng thể**, nhưng đạt NDCG cạnh tranh và vượt trội hơn nhiều baseline truyền thống. Kết quả cho thấy đây là hướng đáng tiếp tục khai thác, đặc biệt nếu cải thiện được candidate coverage và bổ sung reranker có giám sát.

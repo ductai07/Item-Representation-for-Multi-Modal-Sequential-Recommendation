@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit-users", type=int, default=0)
     parser.add_argument("--device", default=None)
     parser.add_argument("--mode", choices=["candidate", "source", "learned_source", "static", "adaptive", "hybrid"], default="hybrid")
+    parser.add_argument("--fusion", choices=["weighted", "equal"], default="weighted", help="Candidate fusion used before reranking.")
     parser.add_argument("--prior-weight", type=float, default=1.0)
     parser.add_argument("--model-weight", type=float, default=0.05)
     parser.add_argument("--rank-weight", type=float, default=1.0, help="Weight for the original combined candidate order in hybrid mode.")
@@ -74,7 +75,15 @@ def main() -> None:
         model.load_state_dict(checkpoint["model"])
         model.eval()
     source_ranker = load_ranker(args.source_ranker) if args.source_ranker else None
-    generator = CandidateGenerator(artifacts, per_source_k=args.per_source_k, max_candidates=args.max_candidates)
+    source_weights = None if args.fusion == "equal" else None
+    if args.fusion == "equal":
+        source_weights = {}
+    generator = CandidateGenerator(
+        artifacts,
+        per_source_k=args.per_source_k,
+        max_candidates=args.max_candidates,
+        source_weights=source_weights,
+    )
     avg = MetricAverager()
     total = len(dataset) if not args.limit_users else min(args.limit_users, len(dataset))
     pool_hits = 0
@@ -151,7 +160,7 @@ def main() -> None:
     summary["AvgCandidatePoolSize"] = sum(pool_sizes) / max(len(pool_sizes), 1)
     summary["OracleAppendTarget"] = bool(args.append_target_for_oracle)
     suffix = "_oracle" if args.append_target_for_oracle else ""
-    out_path = Path(cfg.train.save_dir) / f"two_stage_rerank_{args.mode}_{args.split}{suffix}.json"
+    out_path = Path(cfg.train.save_dir) / f"two_stage_rerank_{args.mode}_{args.fusion}_{args.split}{suffix}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

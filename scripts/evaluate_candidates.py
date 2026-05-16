@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 from cstamoerec.candidate import (
     CandidateGenerator,
+    DEFAULT_SOURCE_WEIGHTS,
     candidate_recall,
     combine_candidate_sources,
     feature_similarity_candidates,
@@ -107,8 +108,10 @@ def main() -> None:
             batch = {key: value.unsqueeze(0).to(device) for key, value in dataset[idx].items()}
             combined_with_model = generator.generate(seq, model=model, batch=batch, include_sasrec=True)
             source_metrics["combined_with_model"].append(candidate_recall(combined_with_model.item_ids, target, args.topk))
-        combined = combine_candidate_sources(named, args.max_candidates)
-        source_metrics["combined"].append(candidate_recall(combined.item_ids, target, args.topk))
+        combined_equal = combine_candidate_sources(named, args.max_candidates)
+        source_metrics["combined_equal"].append(candidate_recall(combined_equal.item_ids, target, args.topk))
+        combined_weighted = combine_candidate_sources(named, args.max_candidates, DEFAULT_SOURCE_WEIGHTS)
+        source_metrics["combined_weighted"].append(candidate_recall(combined_weighted.item_ids, target, args.topk))
 
     summary = {source: average(rows) for source, rows in source_metrics.items()}
     out_path = Path(cfg.train.save_dir) / f"candidate_recall_{args.split}.json"

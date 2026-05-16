@@ -15,6 +15,19 @@ class CandidateResult:
     source_scores: dict[int, dict[str, float]]
 
 
+DEFAULT_SOURCE_WEIGHTS: dict[str, float] = {
+    "sequence_graph": 5.0,
+    "transition": 0.7,
+    "itemcf": 0.7,
+    "text": 0.25,
+    "text_graph": 0.1,
+    "popularity": 0.25,
+    "image": 0.05,
+    "image_graph": 0.05,
+    "sasrec": 0.4,
+}
+
+
 @dataclass
 class SequenceNodeIndex:
     sequences: list[list[int]]
@@ -228,17 +241,22 @@ def sasrec_candidates(model, batch: dict[str, torch.Tensor], k: int) -> list[tup
     return [(int(i), float(v)) for i, v in zip(indices.tolist(), values.tolist()) if int(i) > 0]
 
 
-def combine_candidate_sources(named_candidates: dict[str, list[tuple[int, float]]], max_candidates: int) -> CandidateResult:
+def combine_candidate_sources(
+    named_candidates: dict[str, list[tuple[int, float]]],
+    max_candidates: int,
+    source_weights: dict[str, float] | None = None,
+) -> CandidateResult:
     sources: dict[int, set[str]] = defaultdict(set)
     source_scores: dict[int, dict[str, float]] = defaultdict(dict)
     aggregate = Counter()
     for source, candidates in named_candidates.items():
+        weight = 1.0 if source_weights is None else float(source_weights.get(source, 1.0))
         for rank, (item, score) in enumerate(candidates, start=1):
             if item <= 0:
                 continue
             sources[item].add(source)
             source_scores[item][source] = float(score)
-            aggregate[item] += 1.0 / rank
+            aggregate[item] += weight / rank
     ranked = [item for item, _ in aggregate.most_common(max_candidates)]
     return CandidateResult(item_ids=ranked, sources=dict(sources), source_scores=dict(source_scores))
 
@@ -249,12 +267,14 @@ class CandidateGenerator:
         artifacts: dict[str, Any],
         per_source_k: int = 100,
         max_candidates: int = 300,
+        source_weights: dict[str, float] | None = None,
     ) -> None:
         self.artifacts = artifacts
         self.features = artifacts["features"]
         self.meta = artifacts["meta"]
         self.per_source_k = per_source_k
         self.max_candidates = max_candidates
+        self.source_weights = source_weights if source_weights is not None else DEFAULT_SOURCE_WEIGHTS
         train_examples = artifacts["examples"]["train"]
         self.transition_graph = build_transition_graph(train_examples, self.meta["num_items"])
         self.itemcf_graph = build_itemcf_graph(train_examples, self.meta["num_items"])
@@ -288,7 +308,7 @@ class CandidateGenerator:
         }
         if include_sasrec and model is not None and batch is not None:
             named["sasrec"] = sasrec_candidates(model, batch, self.per_source_k)
-        return combine_candidate_sources(named, self.max_candidates)
+        return combine_candidate_sources(named, self.max_candidates, self.source_weights)
 
 
 def candidate_recall(candidate_items: list[int], target: int, topk: list[int]) -> dict[str, float]:
