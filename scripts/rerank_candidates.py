@@ -135,7 +135,13 @@ def main() -> None:
                     graph_scores,
                     features["item_popularity"],
                 )
-                scores = source_ranker.score(source_features.to(device)).detach().cpu().view(1, -1)
+                learned_scores = source_ranker.score(source_features.to(device)).detach().cpu().view(1, -1)
+                rank_prior = -torch.arange(len(candidates.item_ids), dtype=torch.float).view(1, -1)
+                if rank_prior.numel() > 1 and float(rank_prior.std()) > 1e-8:
+                    rank_prior = (rank_prior - rank_prior.mean()) / rank_prior.std()
+                if learned_scores.numel() > 1 and float(learned_scores.std()) > 1e-8:
+                    learned_scores = (learned_scores - learned_scores.mean()) / learned_scores.std()
+                scores = args.rank_weight * rank_prior + args.prior_weight * learned_scores
             elif args.mode == "adaptive":
                 if model is None or batch is None:
                     raise ValueError("adaptive mode requires a checkpoint-backed model.")

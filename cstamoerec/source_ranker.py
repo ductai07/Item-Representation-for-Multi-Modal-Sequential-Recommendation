@@ -9,6 +9,7 @@ import torch
 
 
 SOURCE_NAMES = [
+    "sequence_graph",
     "popularity",
     "transition",
     "itemcf",
